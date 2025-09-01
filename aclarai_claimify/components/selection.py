@@ -6,11 +6,14 @@ of the Claimify pipeline as a stateless component.
 
 import time
 from typing import Optional, Protocol
+from pydantic import ValidationError
 
 from ..data_models import SelectionResult
 from ..llm_schemas import SelectionResponse
 from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
+from ..config import load_prompt_template
+from ..prompt_utils import format_prompt_with_schema
 
 
 class LLMInterface(Protocol):
@@ -90,36 +93,22 @@ class SelectionComponent:
         sentence = context.current_sentence
         context_text = self._build_context_text(context)
         
-        # Use JSON prompt format matching claimify_selection.yaml
-        prompt = f"""You are an expert at identifying verifiable factual content in text. Your task is to determine whether a given sentence contains information that could be extracted as verifiable claims.
-Analyze the following sentence within its context to determine if it contains verifiable, factual information.
-Context (surrounding sentences):
-{context_text}
-Target sentence: "{sentence.text}"
-Consider these criteria:
-1. Does this sentence contain factual, verifiable information?
-2. Is it a statement (not a question, command, or exclamation)?
-3. Could this information be fact-checked or validated?
-4. Does it describe events, relationships, measurements, or properties?
-5. Is it specific enough to be meaningful?
-Sentences to REJECT:
-- Questions ("What should we do?")
-- Commands ("Please fix this.")
-- Opinions without factual basis ("I think it's bad.")
-- Vague statements ("Something happened.")
-- Very short fragments ("Yes.", "OK.")
-Sentences to SELECT:
-- Technical facts ("The system returned error code 500.")
-- Event descriptions ("The deployment occurred at 10:30 AM.")
-- Measurements ("The response time was 2.3 seconds.")
-- Relationships ("User A reported the bug to Team B.")
-- Specific observations ("The CPU usage spiked to 95%.")
-Respond with valid JSON only:
-{{
-  "selected": true/false,
-  "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of decision"
-}}"""
+        # Load prompt template from YAML
+        prompt_data = load_prompt_template("selection")
+        if prompt_data is None:
+            raise ValueError("Failed to load selection prompt template")
+            
+        prompt_template = prompt_data.get("prompt_template")
+        if prompt_template is None:
+            raise ValueError("Prompt template not found in selection prompt file")
+        
+        # Format prompt with schema and context
+        prompt = format_prompt_with_schema(
+            "selection",
+            prompt_template,
+            context_text=context_text,
+            target_sentence=sentence.text
+        )
         
         try:
             # Call the LLM with the prompt
@@ -129,7 +118,7 @@ Respond with valid JSON only:
                 max_tokens=self.config.max_tokens or 500,
             ).strip()
             
-            # Parse JSON response using Pydantic model
+            # Parse JSON response using Pydantic model with proper error handling
             try:
                 result_data = SelectionResponse.model_validate_json(response)
                 is_selected = result_data.selected
@@ -151,6 +140,10 @@ Respond with valid JSON only:
                     confidence=confidence,
                     rewritten_text=sentence.text if is_selected else None,
                 )
+            except ValidationError as e:
+                # Log detailed validation error for debugging
+                error_details = "\n".join([f"- {error}" for error in e.errors()])
+                raise ValueError(f"Invalid JSON response from LLM does not match expected schema:\n{error_details}") from e
             except Exception as e:
                 raise ValueError(f"Invalid JSON response from LLM: {e}") from e
         except Exception as e:

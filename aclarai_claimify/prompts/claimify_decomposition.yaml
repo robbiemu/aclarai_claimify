@@ -30,20 +30,7 @@ prompt_template: |
   3. Only include claims that pass ALL criteria
   4. For claims that fail criteria, explain why they should become :Sentence nodes instead
 
-  Respond with valid JSON only:
-  {
-    "claim_candidates": [
-      {
-        "text": "The extracted claim text",
-        "is_atomic": true/false,
-        "is_self_contained": true/false, 
-        "is_verifiable": true/false,
-        "passes_criteria": true/false,
-        "confidence": 0.0-1.0,
-        "reasoning": "Explanation of evaluation",
-        "node_type": "Claim" or "Sentence"
-      }
-    ]
-  }
+  Respond with valid JSON only that matches this schema:
+  {json_schema}
 
 output_format: "json"

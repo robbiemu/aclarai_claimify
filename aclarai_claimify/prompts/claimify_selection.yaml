@@ -33,11 +33,7 @@ prompt_template: |
   - Relationships ("User A reported the bug to Team B.")
   - Specific observations ("The CPU usage spiked to 95%.")
 
-  Respond with valid JSON only:
-  {
-    "selected": true/false,
-    "confidence": 0.0-1.0,
-    "reasoning": "Brief explanation of decision"
-  }
+  Respond with valid JSON only that matches this schema:
+  {json_schema}
 
 output_format: "json"

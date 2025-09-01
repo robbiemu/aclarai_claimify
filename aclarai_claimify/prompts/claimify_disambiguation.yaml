@@ -26,11 +26,7 @@ prompt_template: |
   - "Reported an error." → "[The application] reported an error."
   - "The error occurred when..." → "The [authentication] error occurred when..."
 
-  Respond with valid JSON only:
-  {
-    "disambiguated_text": "The rewritten sentence",
-    "changes_made": ["List of specific changes"],
-    "confidence": 0.0-1.0
-  }
+  Respond with valid JSON only that matches this schema:
+  {json_schema}
 
 output_format: "json"
