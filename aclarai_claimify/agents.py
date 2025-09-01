@@ -21,6 +21,11 @@ from .data_models import (
     SelectionResult,
     SentenceChunk,
 )
+from .llm_schemas import (
+    SelectionResponse,
+    DisambiguationResponse,
+    DecompositionResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,12 +188,12 @@ Respond with valid JSON only:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens or 500,
             ).strip()
-            # Parse JSON response
+            # Parse JSON response using Pydantic model
             try:
-                result_data = json.loads(response)
-                is_selected = result_data.get("selected", False)
-                confidence = result_data.get("confidence", 0.0)
-                reasoning = result_data.get("reasoning", "No reasoning provided")
+                result_data = SelectionResponse.model_validate_json(response)
+                is_selected = result_data.selected
+                confidence = result_data.confidence
+                reasoning = result_data.reasoning
                 # Apply confidence threshold - if LLM confidence is below threshold, reject selection
                 if (
                     is_selected
@@ -203,7 +208,7 @@ Respond with valid JSON only:
                     confidence=confidence,
                     rewritten_text=sentence.text if is_selected else None,
                 )
-            except json.JSONDecodeError as e:
+            except Exception as e:
                 raise ValueError(f"Invalid JSON response from LLM: {e}") from e
         except Exception as e:
             # If LLM fails, we cannot perform selection without heuristics
@@ -319,14 +324,12 @@ Respond with valid JSON only:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens or 500,
             ).strip()
-            # Parse JSON response
+            # Parse JSON response using Pydantic model
             try:
-                result_data = json.loads(response)
-                disambiguated_text = result_data.get(
-                    "disambiguated_text", sentence.text
-                )
-                changes_made = result_data.get("changes_made", [])
-                confidence = result_data.get("confidence", 0.8)
+                result_data = DisambiguationResponse.model_validate_json(response)
+                disambiguated_text = result_data.disambiguated_text
+                changes_made = result_data.changes_made
+                confidence = result_data.confidence
                 # Apply confidence threshold - if LLM confidence is below threshold, use original text
                 if confidence < self.config.disambiguation_confidence_threshold:
                     disambiguated_text = sentence.text
@@ -339,7 +342,7 @@ Respond with valid JSON only:
                     changes_made=changes_made,
                     confidence=confidence,
                 )
-            except json.JSONDecodeError as e:
+            except Exception as e:
                 raise ValueError(f"Invalid JSON response from LLM: {e}") from e
         except Exception as e:
             # If LLM fails, we cannot perform disambiguation without heuristics
@@ -470,22 +473,22 @@ Respond with valid JSON only:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens or 1000,
             ).strip()
-            # Parse JSON response
+            # Parse JSON response using Pydantic model
             try:
-                result_data = json.loads(response)
+                result_data = DecompositionResponse.model_validate_json(response)
                 claim_candidates = []
-                for candidate_data in result_data.get("claim_candidates", []):
-                    claim_text = candidate_data.get("text", "").strip()
+                for candidate_data in result_data.claim_candidates:
+                    claim_text = candidate_data.text.strip()
                     if not claim_text:
                         continue
                     # Get quality flags from LLM output
-                    is_atomic = candidate_data.get("is_atomic", False)
-                    is_self_contained = candidate_data.get("is_self_contained", False)
-                    is_verifiable = candidate_data.get("is_verifiable", False)
-                    passes_criteria = candidate_data.get("passes_criteria", False)
-                    reasoning = candidate_data.get("reasoning", "No reasoning provided")
+                    is_atomic = candidate_data.is_atomic
+                    is_self_contained = candidate_data.is_self_contained
+                    is_verifiable = candidate_data.is_verifiable
+                    passes_criteria = candidate_data.passes_criteria
+                    reasoning = candidate_data.reasoning
                     # Get confidence from LLM response or calculate based on quality flags
-                    confidence = candidate_data.get("confidence")
+                    confidence = candidate_data.confidence
                     if confidence is None:
                         # Fallback calculation if LLM doesn't provide confidence
                         if (
@@ -513,7 +516,7 @@ Respond with valid JSON only:
                 return DecompositionResult(
                     original_text=text, claim_candidates=claim_candidates
                 )
-            except json.JSONDecodeError as e:
+            except Exception as e:
                 raise ValueError(f"Invalid JSON response from LLM: {e}") from e
         except Exception as e:
             # If LLM fails, we cannot perform decomposition without heuristics

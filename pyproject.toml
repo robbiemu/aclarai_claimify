@@ -4,6 +4,7 @@ version = "0.1.0"
 dependencies = [
     "llama-index-core",
     "llama-index-llms-openai",
+    "pydantic>=2.0.0",
     "pyyaml",
 ]
 

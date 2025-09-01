@@ -112,7 +112,7 @@ class TestClaimifyPipeline:
         """Test context window building with different configurations."""
         # Test with default context window (p=3, f=1)
         sentences = [
-            SentenceChunk(f"Sentence {i}", "blk_001", f"chunk_{i:03d}", i)
+            SentenceChunk(text=f"Sentence {i}", source_id="blk_001", chunk_id=f"chunk_{i:03d}", sentence_index=i)
             for i in range(10)
         ]
         # Test context for sentence in middle
@@ -266,7 +266,7 @@ class TestClaimifyPipeline:
         pipeline = ClaimifyPipeline(config=large_context_config)
         # Create more sentences to test context window
         sentences = [
-            SentenceChunk(f"Sentence {i} with content.", "blk_001", f"chunk_{i:03d}", i)
+            SentenceChunk(text=f"Sentence {i} with content.", source_id="blk_001", chunk_id=f"chunk_{i:03d}", sentence_index=i)
             for i in range(10)
         ]
         # Test context building with larger window

@@ -4,50 +4,92 @@ Defines the data structures used for Neo4j persistence, including ClaimInput and
 """
 
 import uuid
-from dataclasses import dataclass, field
 from typing import Optional
+from pydantic import BaseModel, Field
 
 
-@dataclass
-class ClaimInput:
+class ClaimInput(BaseModel):
     """
     Input data structure for creating Claim nodes in Neo4j.
     Represents a valid claim extracted by the Claimify pipeline that meets all quality criteria.
     """
 
-    text: str
-    block_id: str
-    entailed_score: Optional[float] = None
-    coverage_score: Optional[float] = None
-    decontextualization_score: Optional[float] = None
-    verifiable: bool = True
-    self_contained: bool = True
-    context_complete: bool = True
-    id: str = field(default_factory=lambda: f"claim_{uuid.uuid4().hex}")
+    text: str = Field(
+        ..., 
+        description="The text content of the claim"
+    )
+    block_id: str = Field(
+        ..., 
+        description="The ID of the source block"
+    )
+    entailed_score: Optional[float] = Field(
+        None, 
+        ge=0.0, 
+        le=1.0,
+        description="Entailment score from evaluation"
+    )
+    coverage_score: Optional[float] = Field(
+        None, 
+        ge=0.0, 
+        le=1.0,
+        description="Coverage score from evaluation"
+    )
+    decontextualization_score: Optional[float] = Field(
+        None, 
+        ge=0.0, 
+        le=1.0,
+        description="Decontextualization score from evaluation"
+    )
+    verifiable: bool = Field(
+        default=True,
+        description="Whether the claim is verifiable"
+    )
+    self_contained: bool = Field(
+        default=True,
+        description="Whether the claim is self-contained"
+    )
+    context_complete: bool = Field(
+        default=True,
+        description="Whether the claim has complete context"
+    )
+    id: str = Field(
+        default_factory=lambda: f"claim_{uuid.uuid4().hex}",
+        description="Unique identifier for the claim"
+    )
 
-    def __post_init__(self):
-        """Generate a unique ID if not provided."""
-        if not self.id:
-            self.id = f"claim_{uuid.uuid4().hex}"
 
-
-@dataclass
-class SentenceInput:
+class SentenceInput(BaseModel):
     """
     Input data structure for creating Sentence nodes in Neo4j.
     Represents sentences that were processed but did not meet claim quality criteria,
     or sentences that were not selected for processing.
     """
 
-    text: str
-    block_id: str
-    ambiguous: bool = False
-    verifiable: bool = False
-    failed_decomposition: bool = False
-    rejection_reason: Optional[str] = None
-    id: str = field(default_factory=lambda: f"sentence_{uuid.uuid4().hex}")
-
-    def __post_init__(self):
-        """Generate a unique ID if not provided."""
-        if not self.id:
-            self.id = f"sentence_{uuid.uuid4().hex}"
+    text: str = Field(
+        ..., 
+        description="The text content of the sentence"
+    )
+    block_id: str = Field(
+        ..., 
+        description="The ID of the source block"
+    )
+    ambiguous: bool = Field(
+        default=False,
+        description="Whether the sentence is ambiguous"
+    )
+    verifiable: bool = Field(
+        default=False,
+        description="Whether the sentence is verifiable"
+    )
+    failed_decomposition: bool = Field(
+        default=False,
+        description="Whether the sentence failed decomposition"
+    )
+    rejection_reason: Optional[str] = Field(
+        None, 
+        description="Reason why the sentence was rejected"
+    )
+    id: str = Field(
+        default_factory=lambda: f"sentence_{uuid.uuid4().hex}",
+        description="Unique identifier for the sentence"
+    )

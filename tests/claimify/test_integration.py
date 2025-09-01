@@ -760,9 +760,9 @@ class TestCreateGraphManagerFromConfigStructure:
         result = ClaimifyResult(
             original_chunk=test_chunk,
             context=test_context,
-            selection_result=SelectionResult(test_chunk, is_selected=True),
+            selection_result=SelectionResult(sentence_chunk=test_chunk, is_selected=True),
             disambiguation_result=DisambiguationResult(
-                test_chunk, "The system failed at startup."
+                original_sentence=test_chunk, disambiguated_text="The system failed at startup."
             ),
             decomposition_result=decomposition_result,
         )
@@ -796,8 +796,10 @@ class TestCreateGraphManagerFromConfigStructure:
         result = ClaimifyResult(
             original_chunk=test_chunk,
             context=test_context,
-            selection_result=SelectionResult(test_chunk, is_selected=True),
-            disambiguation_result=DisambiguationResult(test_chunk, "It failed again."),
+            selection_result=SelectionResult(sentence_chunk=test_chunk, is_selected=True),
+            disambiguation_result=DisambiguationResult(
+                original_sentence=test_chunk, disambiguated_text="It failed again."
+            ),
             decomposition_result=decomposition_result,
         )
         # Convert to graph inputs
@@ -838,9 +840,9 @@ class TestCreateGraphManagerFromConfigStructure:
         result = ClaimifyResult(
             original_chunk=test_chunk,
             context=test_context,
-            selection_result=SelectionResult(test_chunk, is_selected=True),
+            selection_result=SelectionResult(sentence_chunk=test_chunk, is_selected=True),
             disambiguation_result=DisambiguationResult(
-                test_chunk, "Complex sentence with multiple parts."
+                original_sentence=test_chunk, disambiguated_text="Complex sentence with multiple parts."
             ),
             decomposition_result=decomposition_result,
         )
@@ -862,7 +864,7 @@ class TestCreateGraphManagerFromConfigStructure:
         result = ClaimifyResult(
             original_chunk=test_chunk,
             context=test_context,
-            selection_result=SelectionResult(test_chunk, is_selected=False),
+            selection_result=SelectionResult(sentence_chunk=test_chunk, is_selected=False),
         )
         # Convert to graph inputs
         claim_inputs, sentence_inputs = integration._convert_result_to_inputs(result)
@@ -904,7 +906,7 @@ class TestCreateGraphManagerFromConfigStructure:
         result = ClaimifyResult(
             original_chunk=test_chunk,
             context=test_context,
-            selection_result=SelectionResult(test_chunk, is_selected=True),
+            selection_result=SelectionResult(sentence_chunk=test_chunk, is_selected=True),
             decomposition_result=decomposition_result,
         )
         # Persist results
@@ -923,7 +925,7 @@ class TestCreateGraphManagerFromConfigStructure:
         result = ClaimifyResult(
             original_chunk=test_chunk,
             context=test_context,
-            selection_result=SelectionResult(test_chunk, is_selected=False),
+            selection_result=SelectionResult(sentence_chunk=test_chunk, is_selected=False),
         )
         # Persist results
         claims_created, sentences_created, errors = (

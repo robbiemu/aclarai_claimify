@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from aclarai_claimify.data_models import ClaimCandidate
 from aclarai_claimify.outputs import ClaimInput, SentenceInput
 from aclarai_claimify.config import load_claimify_config
-from aclarai_claimify.integration import ClaimifyGraphIntegration
 
 
 def test_basic_functionality():
@@ -40,6 +39,7 @@ def test_basic_functionality():
     print(f"Created sentence input: {sentence_input}")
 
     # Test integration
+    from aclarai_claimify.integration import ClaimifyGraphIntegration
     integration = ClaimifyGraphIntegration()
     print(f"Created integration: {integration}")
 

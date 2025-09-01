@@ -5,9 +5,9 @@ pipeline, including input/output types and configuration models.
 """
 
 import logging
-from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -19,22 +19,32 @@ class NodeType(str, Enum):
     SENTENCE = "Sentence"
 
 
-@dataclass
-class SentenceChunk:
+class SentenceChunk(BaseModel):
     """
     A sentence chunk to be processed by the Claimify pipeline.
     Represents individual sentences extracted from Tier 1 content,
     which serve as input to the Selection stage.
     """
 
-    text: str
-    source_id: str  # Original block/document ID
-    chunk_id: str  # Unique identifier for this chunk
-    sentence_index: int  # Position within the source
+    text: str = Field(
+        ..., 
+        description="The text content of the sentence"
+    )
+    source_id: str = Field(
+        ..., 
+        description="Original block/document ID"
+    )
+    chunk_id: str = Field(
+        ..., 
+        description="Unique identifier for this chunk"
+    )
+    sentence_index: int = Field(
+        ..., 
+        description="Position within the source"
+    )
 
 
-@dataclass
-class ClaimifyContext:
+class ClaimifyContext(BaseModel):
     """
     Context window for Claimify processing.
     Contains preceding and following sentences to provide context
@@ -42,12 +52,14 @@ class ClaimifyContext:
     """
 
     current_sentence: SentenceChunk
-    preceding_sentences: List[SentenceChunk] = field(
-        default_factory=list
-    )  # p sentences
-    following_sentences: List[SentenceChunk] = field(
-        default_factory=list
-    )  # f sentences
+    preceding_sentences: List[SentenceChunk] = Field(
+        default_factory=list,
+        description="Preceding sentences (p sentences)"
+    )
+    following_sentences: List[SentenceChunk] = Field(
+        default_factory=list,
+        description="Following sentences (f sentences)"
+    )
 
     @property
     def context_window_size(self) -> tuple[int, int]:
@@ -55,39 +67,87 @@ class ClaimifyContext:
         return len(self.preceding_sentences), len(self.following_sentences)
 
 
-@dataclass
-class SelectionResult:
+class SelectionResult(BaseModel):
     """Result of the Selection stage."""
 
     sentence_chunk: SentenceChunk
-    is_selected: bool
-    confidence: Optional[float] = None
-    reasoning: Optional[str] = None
-    processing_time: Optional[float] = None
-    rewritten_text: Optional[str] = None  # Cleaned sentence text from LLM
+    is_selected: bool = Field(
+        ..., 
+        description="Whether the sentence was selected for processing"
+    )
+    confidence: Optional[float] = Field(
+        None, 
+        ge=0.0, 
+        le=1.0,
+        description="Confidence score for the selection decision"
+    )
+    reasoning: Optional[str] = Field(
+        None, 
+        description="Explanation of the selection decision"
+    )
+    processing_time: Optional[float] = Field(
+        None, 
+        description="Time taken to process the selection"
+    )
+    rewritten_text: Optional[str] = Field(
+        None, 
+        description="Cleaned sentence text from LLM"
+    )
 
 
-@dataclass
-class DisambiguationResult:
+class DisambiguationResult(BaseModel):
     """Result of the Disambiguation stage."""
 
     original_sentence: SentenceChunk
-    disambiguated_text: str
-    changes_made: List[str] = field(default_factory=list)  # Description of changes
-    confidence: Optional[float] = None
-    processing_time: Optional[float] = None
+    disambiguated_text: str = Field(
+        ..., 
+        description="The disambiguated sentence text"
+    )
+    changes_made: List[str] = Field(
+        default_factory=list,
+        description="Description of changes made during disambiguation"
+    )
+    confidence: Optional[float] = Field(
+        None, 
+        ge=0.0, 
+        le=1.0,
+        description="Confidence score for the disambiguation"
+    )
+    processing_time: Optional[float] = Field(
+        None, 
+        description="Time taken to process the disambiguation"
+    )
 
 
-@dataclass
-class ClaimCandidate:
+class ClaimCandidate(BaseModel):
     """A candidate claim from the Decomposition stage."""
 
-    text: str
-    is_atomic: bool
-    is_self_contained: bool
-    is_verifiable: bool
-    confidence: Optional[float] = None
-    reasoning: Optional[str] = None
+    text: str = Field(
+        ..., 
+        description="The claim candidate text"
+    )
+    is_atomic: bool = Field(
+        ..., 
+        description="Whether the candidate is atomic (single fact)"
+    )
+    is_self_contained: bool = Field(
+        ..., 
+        description="Whether the candidate is self-contained (no ambiguous references)"
+    )
+    is_verifiable: bool = Field(
+        ..., 
+        description="Whether the candidate is verifiable (factually checkable)"
+    )
+    confidence: Optional[float] = Field(
+        None, 
+        ge=0.0, 
+        le=1.0,
+        description="Confidence score for the candidate quality"
+    )
+    reasoning: Optional[str] = Field(
+        None, 
+        description="Explanation of the quality evaluation"
+    )
 
     @property
     def passes_criteria(self) -> bool:
@@ -100,13 +160,21 @@ class ClaimCandidate:
         return NodeType.CLAIM if self.passes_criteria else NodeType.SENTENCE
 
 
-@dataclass
-class DecompositionResult:
+class DecompositionResult(BaseModel):
     """Result of the Decomposition stage."""
 
-    original_text: str
-    claim_candidates: List[ClaimCandidate] = field(default_factory=list)
-    processing_time: Optional[float] = None
+    original_text: str = Field(
+        ..., 
+        description="The original text that was decomposed"
+    )
+    claim_candidates: List[ClaimCandidate] = Field(
+        default_factory=list,
+        description="List of claim candidates extracted from the sentence"
+    )
+    processing_time: Optional[float] = Field(
+        None, 
+        description="Time taken to process the decomposition"
+    )
 
     @property
     def valid_claims(self) -> List[ClaimCandidate]:
@@ -119,17 +187,31 @@ class DecompositionResult:
         return [claim for claim in self.claim_candidates if not claim.passes_criteria]
 
 
-@dataclass
-class ClaimifyResult:
+class ClaimifyResult(BaseModel):
     """Complete result of processing a sentence through the Claimify pipeline."""
 
     original_chunk: SentenceChunk
     context: ClaimifyContext
-    selection_result: Optional[SelectionResult] = None
-    disambiguation_result: Optional[DisambiguationResult] = None
-    decomposition_result: Optional[DecompositionResult] = None
-    total_processing_time: Optional[float] = None
-    errors: List[str] = field(default_factory=list)
+    selection_result: Optional[SelectionResult] = Field(
+        None, 
+        description="Result of the Selection stage"
+    )
+    disambiguation_result: Optional[DisambiguationResult] = Field(
+        None, 
+        description="Result of the Disambiguation stage"
+    )
+    decomposition_result: Optional[DecompositionResult] = Field(
+        None, 
+        description="Result of the Decomposition stage"
+    )
+    total_processing_time: Optional[float] = Field(
+        None, 
+        description="Total time taken to process the sentence"
+    )
+    errors: List[str] = Field(
+        default_factory=list,
+        description="List of errors encountered during processing"
+    )
 
     @property
     def was_processed(self) -> bool:
@@ -151,31 +233,95 @@ class ClaimifyResult:
         return []
 
 
-@dataclass
-class ClaimifyConfig:
+class ClaimifyConfig(BaseModel):
     """Configuration for the Claimify pipeline."""
 
     # Context window parameters
-    context_window_p: int = 3  # Previous sentences
-    context_window_f: int = 1  # Following sentences
+    context_window_p: int = Field(
+        default=3,
+        ge=0,
+        description="Previous sentences in context window"
+    )
+    context_window_f: int = Field(
+        default=1,
+        ge=0,
+        description="Following sentences in context window"
+    )
+    
     # Model configuration
-    selection_model: Optional[str] = None
-    disambiguation_model: Optional[str] = None
-    decomposition_model: Optional[str] = None
-    default_model: str = "gpt-3.5-turbo"
+    selection_model: Optional[str] = Field(
+        None, 
+        description="Model to use for selection stage"
+    )
+    disambiguation_model: Optional[str] = Field(
+        None, 
+        description="Model to use for disambiguation stage"
+    )
+    decomposition_model: Optional[str] = Field(
+        None, 
+        description="Model to use for decomposition stage"
+    )
+    default_model: str = Field(
+        default="gpt-3.5-turbo",
+        description="Default model to use when stage model is not specified"
+    )
+    
     # Processing parameters
-    max_retries: int = 3
-    timeout_seconds: int = 30
-    temperature: float = 0.1
-    max_tokens: int = 1000
-    # Quality thresholds (to be added when threshold evaluation is implemented)
-    selection_confidence_threshold: float = 0.5
-    disambiguation_confidence_threshold: float = 0.5
-    decomposition_confidence_threshold: float = 0.5
+    max_retries: int = Field(
+        default=3,
+        ge=0,
+        description="Maximum number of retries for LLM calls"
+    )
+    timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        description="Timeout for LLM calls in seconds"
+    )
+    temperature: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Temperature for LLM calls"
+    )
+    max_tokens: int = Field(
+        default=1000,
+        ge=1,
+        description="Maximum tokens for LLM calls"
+    )
+    
+    # Quality thresholds
+    selection_confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold for selection"
+    )
+    disambiguation_confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold for disambiguation"
+    )
+    decomposition_confidence_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold for decomposition"
+    )
+    
     # Logging configuration
-    log_decisions: bool = True
-    log_transformations: bool = True
-    log_timing: bool = True
+    log_decisions: bool = Field(
+        default=True,
+        description="Whether to log agent decisions"
+    )
+    log_transformations: bool = Field(
+        default=True,
+        description="Whether to log transformations"
+    )
+    log_timing: bool = Field(
+        default=True,
+        description="Whether to log processing times"
+    )
 
     def get_model_for_stage(self, stage: str) -> str:
         """Get the configured model for a specific pipeline stage."""

@@ -522,8 +522,8 @@ class TestAgentConfidenceThresholds:
         config = ClaimifyConfig(decomposition_confidence_threshold=0.7)
         # LLM returns mix of high and low confidence claims
         json_response = """{"claim_candidates": [
-            {"text": "High quality claim", "is_atomic": true, "is_self_contained": true, "is_verifiable": true, "passes_criteria": true, "confidence": 0.95, "reasoning": "Excellent claim"},
-            {"text": "Low quality claim", "is_atomic": false, "is_self_contained": false, "is_verifiable": false, "passes_criteria": false, "confidence": 0.2, "reasoning": "Poor claim"}
+            {"text": "High quality claim", "is_atomic": true, "is_self_contained": true, "is_verifiable": true, "passes_criteria": true, "confidence": 0.95, "reasoning": "Excellent claim", "node_type": "Claim"},
+            {"text": "Low quality claim", "is_atomic": false, "is_self_contained": false, "is_verifiable": false, "passes_criteria": false, "confidence": 0.2, "reasoning": "Poor claim", "node_type": "Sentence"}
         ]}"""
         mock_llm = MockLLM(json_response)
         agent = DecompositionAgent(llm=mock_llm, config=config)
