@@ -7,6 +7,7 @@ of the Claimify pipeline as a stateless component.
 import time
 from typing import Optional, Protocol
 
+import dspy
 from pydantic import ValidationError
 
 from ..data_models import DisambiguationResult, SentenceChunk
@@ -15,6 +16,7 @@ from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
 from ..config import load_prompt_template
 from ..prompt_utils import format_prompt_with_schema
+from ..signatures import DisambiguationSignature
 
 
 class LLMInterface(Protocol):
@@ -22,7 +24,7 @@ class LLMInterface(Protocol):
 
     def complete(self, prompt: str, **kwargs) -> str:
         """Generate a completion for the given prompt."""
-        ...
+        ... 
 
 
 class DisambiguationComponent:
@@ -39,6 +41,8 @@ class DisambiguationComponent:
     ):
         self.llm = llm
         self.config = config or ClaimifyConfig()
+        # Initialize DSPy module
+        self.dspy_module = dspy.Predict(DisambiguationSignature)
 
     def __call__(self, state: ClaimifyState) -> ClaimifyState:
         """Process a selected sentence to remove ambiguities and add inferred subjects.
@@ -90,7 +94,9 @@ class DisambiguationComponent:
             return new_state
 
     def _llm_disambiguation(
-        self, sentence: SentenceChunk, context
+        self,
+        sentence: SentenceChunk,
+        context
     ) -> DisambiguationResult:
         """LLM-based disambiguation following the Claimify approach.
 
@@ -103,30 +109,13 @@ class DisambiguationComponent:
 
         context_text = self._build_context_text(context)
 
-        # Load prompt template from YAML
-        prompt_data = load_prompt_template("disambiguation")
-        if prompt_data is None:
-            raise ValueError("Failed to load disambiguation prompt template")
-
-        prompt_template = prompt_data.get("prompt_template")
-        if prompt_template is None:
-            raise ValueError("Prompt template not found in disambiguation prompt file")
-
-        # Format prompt with schema and context
-        prompt = format_prompt_with_schema(
-            "disambiguation",
-            prompt_template,
-            context_text=context_text,
-            target_sentence=sentence.text,
-        )
-
         try:
-            # Call the LLM with the prompt
-            response = self.llm.complete(
-                prompt,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens or 500,
-            ).strip()
+            # Call the DSPy module
+            response = self.dspy_module(
+                context_text=context_text,
+                target_sentence=sentence.text,
+            )
+            response = response.disambiguation_response_json.strip()
 
             # Parse JSON response using Pydantic model with proper error handling
             try:

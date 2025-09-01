@@ -6,6 +6,8 @@ of the Claimify pipeline as a stateless component.
 
 import time
 from typing import Optional, Protocol
+
+import dspy
 from pydantic import ValidationError
 
 from ..data_models import SelectionResult
@@ -14,6 +16,7 @@ from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
 from ..config import load_prompt_template
 from ..prompt_utils import format_prompt_with_schema
+from ..signatures import SelectionSignature
 
 
 class LLMInterface(Protocol):
@@ -38,6 +41,8 @@ class SelectionComponent:
     ):
         self.llm = llm
         self.config = config or ClaimifyConfig()
+        # Initialize DSPy module
+        self.dspy_module = dspy.Predict(SelectionSignature)
 
     def __call__(self, state: ClaimifyState) -> ClaimifyState:
         """Process a sentence to determine if it should be selected for further processing.
@@ -92,39 +97,22 @@ class SelectionComponent:
 
         sentence = context.current_sentence
         context_text = self._build_context_text(context)
-        
-        # Load prompt template from YAML
-        prompt_data = load_prompt_template("selection")
-        if prompt_data is None:
-            raise ValueError("Failed to load selection prompt template")
-            
-        prompt_template = prompt_data.get("prompt_template")
-        if prompt_template is None:
-            raise ValueError("Prompt template not found in selection prompt file")
-        
-        # Format prompt with schema and context
-        prompt = format_prompt_with_schema(
-            "selection",
-            prompt_template,
-            context_text=context_text,
-            target_sentence=sentence.text
-        )
-        
+
         try:
-            # Call the LLM with the prompt
-            response = self.llm.complete(
-                prompt,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens or 500,
-            ).strip()
-            
+            # Call the DSPy module
+            response = self.dspy_module(
+                context_text=context_text,
+                target_sentence=sentence.text,
+            )
+            response = response.selection_response_json.strip()
+
             # Parse JSON response using Pydantic model with proper error handling
             try:
                 result_data = SelectionResponse.model_validate_json(response)
                 is_selected = result_data.selected
                 confidence = result_data.confidence
                 reasoning = result_data.reasoning
-                
+
                 # Apply confidence threshold - if LLM confidence is below threshold, reject selection
                 if (
                     is_selected
@@ -132,7 +120,7 @@ class SelectionComponent:
                 ):
                     is_selected = False
                     reasoning = f"LLM selected but confidence {confidence:.2f} below threshold {self.config.selection_confidence_threshold:.2f}"
-                    
+
                 return SelectionResult(
                     sentence_chunk=sentence,
                     is_selected=is_selected,

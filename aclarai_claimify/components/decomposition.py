@@ -7,6 +7,7 @@ of the Claimify pipeline as a stateless component.
 import time
 from typing import Optional, Protocol
 
+import dspy
 from pydantic import ValidationError
 
 from ..data_models import DecompositionResult
@@ -15,6 +16,7 @@ from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
 from ..config import load_prompt_template
 from ..prompt_utils import format_prompt_with_schema
+from ..signatures import DecompositionSignature
 
 
 class LLMInterface(Protocol):
@@ -22,7 +24,7 @@ class LLMInterface(Protocol):
 
     def complete(self, prompt: str, **kwargs) -> str:
         """Generate a completion for the given prompt."""
-        ...
+        ... 
 
 
 class DecompositionComponent:
@@ -39,6 +41,8 @@ class DecompositionComponent:
     ):
         self.llm = llm
         self.config = config or ClaimifyConfig()
+        # Initialize DSPy module
+        self.dspy_module = dspy.Predict(DecompositionSignature)
 
     def __call__(self, state: ClaimifyState) -> ClaimifyState:
         """Process a disambiguated sentence to extract atomic claims.
@@ -99,29 +103,12 @@ class DecompositionComponent:
         """
         assert self.llm is not None, "LLM must be initialized for this method"
 
-        # Load prompt template from YAML
-        prompt_data = load_prompt_template("decomposition")
-        if prompt_data is None:
-            raise ValueError("Failed to load decomposition prompt template")
-
-        prompt_template = prompt_data.get("prompt_template")
-        if prompt_template is None:
-            raise ValueError("Prompt template not found in decomposition prompt file")
-
-        # Format prompt with schema and context
-        prompt = format_prompt_with_schema(
-            "decomposition",
-            prompt_template,
-            disambiguated_text=text,
-        )
-
         try:
-            # Call the LLM with the prompt
-            response = self.llm.complete(
-                prompt,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens or 1000,
-            ).strip()
+            # Call the DSPy module
+            response = self.dspy_module(
+                disambiguated_text=text,
+            )
+            response = response.decomposition_response_json.strip()
 
             # Parse JSON response using Pydantic model with proper error handling
             try:
