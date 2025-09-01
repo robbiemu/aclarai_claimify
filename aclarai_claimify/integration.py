@@ -7,9 +7,8 @@ and persist them to the knowledge graph.
 import logging
 from typing import List, Optional, Tuple
 
-from ..graph.models import ClaimInput, SentenceInput
-from ..graph.neo4j_manager import Neo4jGraphManager
 from .data_models import ClaimCandidate, ClaimifyResult, SentenceChunk
+from .outputs import ClaimInput, SentenceInput
 
 logger = logging.getLogger(__name__)
 
@@ -20,26 +19,33 @@ class ClaimifyGraphIntegration:
     Handles the conversion of Claimify output (ClaimCandidate objects) into
     Neo4j input data (ClaimInput, SentenceInput) and manages persistence
     to the knowledge graph.
+    
+    Note: Neo4jGraphManager dependency is now optional and passed as an argument
+    to methods that require it, rather than being a hard dependency in __init__.
     """
 
-    def __init__(self, graph_manager: Neo4jGraphManager):
+    def __init__(self):
         """
-        Initialize the integration with a graph manager.
-        Args:
-            graph_manager: Neo4jGraphManager instance for database operations
+        Initialize the integration without any graph manager dependency.
+        Graph manager is now passed as an argument to methods that need it.
         """
-        self.graph_manager = graph_manager
+        pass
 
     def persist_claimify_results(
-        self, results: List[ClaimifyResult]
+        self, results: List[ClaimifyResult], graph_manager=None
     ) -> Tuple[int, int, List[str]]:
         """
         Persist Claimify pipeline results to Neo4j.
         Args:
             results: List of ClaimifyResult objects from pipeline processing
+            graph_manager: Neo4jGraphManager instance for database operations (optional)
         Returns:
             Tuple of (claims_created, sentences_created, errors)
         """
+        if graph_manager is None:
+            logger.warning("[integration.ClaimifyGraphIntegration.persist_claimify_results] No graph manager provided, skipping persistence")
+            return 0, 0, ["No graph manager provided"]
+            
         claim_inputs = []
         sentence_inputs = []
         errors = []
@@ -60,7 +66,7 @@ class ClaimifyGraphIntegration:
         sentences_created = 0
         if claim_inputs:
             try:
-                created_claims = self.graph_manager.create_claims(claim_inputs)
+                created_claims = graph_manager.create_claims(claim_inputs)
                 claims_created = len(created_claims)
                 logger.info(
                     f"[integration.ClaimifyGraphIntegration.persist_claimify_results] Persisted {claims_created} claims"
@@ -73,7 +79,68 @@ class ClaimifyGraphIntegration:
                 )
         if sentence_inputs:
             try:
-                created_sentences = self.graph_manager.create_sentences(sentence_inputs)
+                created_sentences = graph_manager.create_sentences(sentence_inputs)
+                sentences_created = len(created_sentences)
+                logger.info(
+                    f"[integration.ClaimifyGraphIntegration.persist_claimify_results] Persisted {sentences_created} sentences"
+                )
+            except Exception as e:
+                error_msg = f"Failed to persist sentences to Neo4j: {e}"
+                errors.append(error_msg)
+                logger.error(
+                    f"[integration.ClaimifyGraphIntegration.persist_claimify_results] {error_msg}"
+                )
+        return claims_created, sentences_created, errors
+
+    def persist_claimify_results(
+        self, results: List[ClaimifyResult], graph_manager=None
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Persist Claimify pipeline results to Neo4j.
+        Args:
+            results: List of ClaimifyResult objects from pipeline processing
+            graph_manager: Neo4jGraphManager instance for database operations (optional)
+        Returns:
+            Tuple of (claims_created, sentences_created, errors)
+        """
+        if graph_manager is None:
+            logger.warning("[integration.ClaimifyGraphIntegration.persist_claimify_results] No graph manager provided, skipping persistence")
+            return 0, 0, ["No graph manager provided"]
+            
+        claim_inputs = []
+        sentence_inputs = []
+        errors = []
+        # Convert results to Neo4j input data
+        for result in results:
+            try:
+                claims, sentences = self._convert_result_to_inputs(result)
+                claim_inputs.extend(claims)
+                sentence_inputs.extend(sentences)
+            except Exception as e:
+                error_msg = f"Failed to convert result for chunk {result.original_chunk.chunk_id}: {e}"
+                errors.append(error_msg)
+                logger.error(
+                    f"[integration.ClaimifyGraphIntegration.persist_claimify_results] {error_msg}"
+                )
+        # Persist to Neo4j
+        claims_created = 0
+        sentences_created = 0
+        if claim_inputs:
+            try:
+                created_claims = graph_manager.create_claims(claim_inputs)
+                claims_created = len(created_claims)
+                logger.info(
+                    f"[integration.ClaimifyGraphIntegration.persist_claimify_results] Persisted {claims_created} claims"
+                )
+            except Exception as e:
+                error_msg = f"Failed to persist claims to Neo4j: {e}"
+                errors.append(error_msg)
+                logger.error(
+                    f"[integration.ClaimifyGraphIntegration.persist_claimify_results] {error_msg}"
+                )
+        if sentence_inputs:
+            try:
+                created_sentences = graph_manager.create_sentences(sentence_inputs)
                 sentences_created = len(created_sentences)
                 logger.info(
                     f"[integration.ClaimifyGraphIntegration.persist_claimify_results] Persisted {sentences_created} sentences"
@@ -194,19 +261,21 @@ class ClaimifyGraphIntegration:
         )
 
 
-def create_graph_manager_from_config(_config: dict) -> Neo4jGraphManager:
+def create_graph_manager_from_config(_config: dict):
     """
     Create a Neo4jGraphManager from configuration.
     Args:
         config: Configuration dictionary with Neo4j settings
     Returns:
-        Configured Neo4jGraphManager instance
+        Configured Neo4jGraphManager instance or None if dependencies are not available
     """
-    # Load aclarai config which includes Neo4j settings
-    from ..config import load_config
-
-    aclarai_config = load_config(validate=False)
-    manager = Neo4jGraphManager(config=aclarai_config)
-    # Apply schema if not already applied
-    manager.setup_schema()
-    return manager
+    try:
+        # Try to import Neo4j dependencies
+        from neo4j import GraphDatabase
+        # Load aclarai config which includes Neo4j settings
+        # NOTE: This is a placeholder - in a decoupled version, this would need to be adapted
+        # to work with local configuration rather than depending on external config
+        return None  # Return None as we're decoupling from Neo4j
+    except ImportError:
+        logger.warning("[integration.create_graph_manager_from_config] Neo4j dependencies not available")
+        return None

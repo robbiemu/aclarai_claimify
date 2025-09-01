@@ -9,7 +9,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from aclarai_shared.claimify.data_models import (
+from aclarai_claimify.data_models import (
     ClaimCandidate,
     ClaimifyConfig,
     ClaimifyContext,

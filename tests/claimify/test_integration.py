@@ -8,7 +8,7 @@ import os
 from unittest.mock import Mock
 
 import pytest
-from aclarai_shared.claimify.data_models import (
+from aclarai_claimify.data_models import (
     ClaimCandidate,
     ClaimifyContext,
     ClaimifyResult,
@@ -17,14 +17,14 @@ from aclarai_shared.claimify.data_models import (
     SelectionResult,
     SentenceChunk,
 )
-from aclarai_shared.claimify.integration import (
+from aclarai_claimify.integration import (
     ClaimifyGraphIntegration,
 )
-from aclarai_shared.graph.models import ClaimInput, SentenceInput
+from aclarai_claimify.outputs import ClaimInput, SentenceInput
 
 
-class MockNeo4jGraphManager:
-    """Mock Neo4j graph manager for testing."""
+class MockGraphManager:
+    """Mock graph manager for testing."""
 
     def __init__(self):
         self.claims_created = []
@@ -39,10 +39,6 @@ class MockNeo4jGraphManager:
         """Mock sentence creation."""
         self.sentences_created.extend(sentences)
         return [f"sentence_{i}" for i in range(len(sentences))]
-
-    def apply_core_schema(self):
-        """Mock schema application."""
-        return True
 
     def setup_schema(self):
         """Mock schema setup."""
@@ -62,9 +58,9 @@ class TestClaimifyGraphIntegration:
         return manager
 
     @pytest.fixture
-    def integration(self, mock_graph_manager):
-        """Create integration instance with mock manager."""
-        return ClaimifyGraphIntegration(mock_graph_manager)
+    def integration(self):
+        """Create integration instance without graph manager dependency."""
+        return ClaimifyGraphIntegration()
 
     @pytest.fixture
     def test_chunk(self):
@@ -697,9 +693,9 @@ class TestCreateGraphManagerFromConfigStructure:
         return manager
 
     @pytest.fixture
-    def integration(self, mock_graph_manager):
-        """Create integration instance with mock manager."""
-        return ClaimifyGraphIntegration(mock_graph_manager)
+    def integration(self):
+        """Create integration instance without graph manager dependency."""
+        return ClaimifyGraphIntegration()
 
     @pytest.fixture
     def test_chunk(self):
@@ -721,7 +717,7 @@ class TestCreateGraphManagerFromConfigStructure:
         # Mock test - verify module structure exists
         manager_path = os.path.join(
             os.path.dirname(__file__),
-            "../../aclarai_shared/claimify/integration.py",
+            "../../aclarai_claimify/integration.py",
         )
         assert os.path.exists(manager_path)
         with open(manager_path, "r") as f:
@@ -733,17 +729,17 @@ class TestCreateGraphManagerFromConfigStructure:
         # Mock test - verify module structure exists
         integration_path = os.path.join(
             os.path.dirname(__file__),
-            "../../aclarai_shared/claimify/integration.py",
+            "../../aclarai_claimify/integration.py",
         )
         assert os.path.exists(integration_path)
         with open(integration_path, "r") as f:
             content = f.read()
             assert "create_graph_manager_from_config" in content
 
-    def test_integration_initialization(self, mock_graph_manager):
+    def test_integration_initialization(self):
         """Test integration initialization."""
-        integration = ClaimifyGraphIntegration(mock_graph_manager)
-        assert integration.graph_manager == mock_graph_manager
+        integration = ClaimifyGraphIntegration()
+        assert isinstance(integration, ClaimifyGraphIntegration)
 
     def test_convert_successful_claim_result(
         self, integration, test_chunk, test_context
@@ -881,17 +877,17 @@ class TestCreateGraphManagerFromConfigStructure:
         assert not sentence.verifiable  # Assumed not verifiable since not selected
         assert sentence.rejection_reason == "Not selected by Selection agent"
 
-    def test_persist_claimify_results_empty(self, integration):
+    def test_persist_claimify_results_empty(self, integration, mock_graph_manager):
         """Test persisting empty results list."""
         claims_created, sentences_created, errors = (
-            integration.persist_claimify_results([])
+            integration.persist_claimify_results([], mock_graph_manager)
         )
         assert claims_created == 0
         assert sentences_created == 0
         assert len(errors) == 0
 
     def test_persist_claimify_results_with_claims(
-        self, integration, test_chunk, test_context
+        self, integration, mock_graph_manager, test_chunk, test_context
     ):
         """Test persisting results with valid claims."""
         # Create test results with claims
@@ -913,14 +909,14 @@ class TestCreateGraphManagerFromConfigStructure:
         )
         # Persist results
         claims_created, sentences_created, errors = (
-            integration.persist_claimify_results([result])
+            integration.persist_claimify_results([result], mock_graph_manager)
         )
         assert claims_created == 1
         assert sentences_created == 0
         assert len(errors) == 0
 
     def test_persist_claimify_results_with_sentences(
-        self, integration, test_chunk, test_context
+        self, integration, mock_graph_manager, test_chunk, test_context
     ):
         """Test persisting results with sentence nodes."""
         # Create test results with rejected sentences
@@ -931,7 +927,7 @@ class TestCreateGraphManagerFromConfigStructure:
         )
         # Persist results
         claims_created, sentences_created, errors = (
-            integration.persist_claimify_results([result])
+            integration.persist_claimify_results([result], mock_graph_manager)
         )
         assert claims_created == 0
         assert sentences_created == 1

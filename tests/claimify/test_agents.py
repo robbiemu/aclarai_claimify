@@ -12,12 +12,12 @@ import pytest
 # Add path without importing the problematic shared package
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 # Import from claimify directly
-from aclarai_shared.claimify.agents import (
+from aclarai_claimify.agents import (
     DecompositionAgent,
     DisambiguationAgent,
     SelectionAgent,
 )
-from aclarai_shared.claimify.data_models import (
+from aclarai_claimify.data_models import (
     ClaimifyConfig,
     ClaimifyContext,
     SentenceChunk,

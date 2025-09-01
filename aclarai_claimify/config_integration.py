@@ -1,13 +1,15 @@
 """
 Configuration integration for Claimify pipeline.
-This module extracts and applies configuration options for the Claimify pipeline
-from the main aclarai configuration file.
+This module provides backward compatibility for loading configuration
+from the main aclarai configuration format, while supporting the new
+standalone configuration approach.
 """
 
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .config import load_claimify_config
 from .data_models import ClaimifyConfig
 
 logger = logging.getLogger(__name__)
@@ -94,10 +96,10 @@ def load_claimify_config_from_file(config_file: Optional[str] = None) -> Claimif
         search_paths = []
         # Priority 1: settings directory
         for path in [current_path] + list(current_path.parents):
-            search_paths.append(path / "settings" / "aclarai.config.yaml")
+            search_paths.append(path / "settings" / "claimify.config.yaml")
         # Priority 2: root level in current and parent directories
         for path in [current_path] + list(current_path.parents):
-            search_paths.append(path / "aclarai.config.yaml")
+            search_paths.append(path / "claimify.config.yaml")
         for config_path in search_paths:
             if config_path.exists():
                 config_file = str(config_path)
@@ -147,3 +149,16 @@ def get_model_config_for_stage(config_data: Dict[str, Any], stage: str) -> str:
         return fallback_plugin
 
     raise ValueError(f"No valid model configuration found for stage '{stage}'")
+
+
+# Backward compatibility function
+def load_standalone_claimify_config() -> ClaimifyConfig:
+    """
+    Load standalone Claimify configuration.
+    This function provides backward compatibility for code that expects
+    the old configuration loading mechanism.
+    
+    Returns:
+        ClaimifyConfig instance with loaded settings
+    """
+    return load_claimify_config()
