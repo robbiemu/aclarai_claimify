@@ -1,0 +1,11 @@
+[project]
+name = "aclarai-claimify"
+version = "0.1.0"
+dependencies = [
+    "llama-index-core",
+    "llama-index-llms-openai",
+    "pyyaml",
+]
+
+[tool.setuptools]
+packages = ["aclarai_claimify"]
