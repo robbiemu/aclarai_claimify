@@ -238,7 +238,7 @@ class TestGenerateDataset:
 
                 # Parse the JSON line
                 data = json.loads(lines[0])
-                assert data["context_text"] == "[0] It failed with error code 500."
+                assert data["context_text"] == ""
                 assert data["target_sentence"] == "It failed with error code 500."
                 assert "selection_response_json" in data
 

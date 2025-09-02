@@ -14,6 +14,8 @@ import tqdm
 import litellm
 from litellm import RateLimitError
 
+from ..utils.context import create_context_window
+
 
 class GenerationError(Exception):
     """Raised when dataset generation fails."""
@@ -354,6 +356,7 @@ def generate_dataset(
     component: str,
     teacher_model: str,
     model_params: Optional[Dict[str, Any]] = None,
+    k_window_size: int = 2,
 ) -> None:
     """Generate a gold standard dataset from raw text inputs.
 
@@ -363,6 +366,7 @@ def generate_dataset(
         component: Component name (selection, disambiguation, decomposition)
         teacher_model: Teacher model name
         model_params: Additional model parameters to pass to LiteLLM
+        k_window_size: Number of sentences before/after to include as context.
 
     Raises:
         GenerationError: If generation fails
@@ -409,10 +413,10 @@ def generate_dataset(
                     # For decomposition, the line is the disambiguated text
                     example = generator(line, teacher_model, model_params)
                 else:
-                    # For selection and disambiguation, we need context and target
-                    # We'll create a simple context with just the sentence itself
-                    # In practice, users should provide better context
-                    context = f"[0] {line}"
+                    # For selection and disambiguation, create a sliding context window
+                    context = create_context_window(
+                        all_sentences=lines, target_index=i, k=k_window_size
+                    )
                     example = generator(context, line, teacher_model, model_params)
 
                 if example is not None:

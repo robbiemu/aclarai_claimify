@@ -374,6 +374,7 @@ def compile_component(
     seed: Optional[int] = 42,
     verbose: bool = True,
     model_params: Optional[Dict[str, Any]] = None,
+    k_window_size: Optional[int] = None,
 ) -> None:
     """Compile a Claimify component using DSPy optimization.
 
@@ -484,6 +485,7 @@ def compile_component(
             few_shots=few_shots,
             system_prompt=system_prompt,
             validation_metrics=validation_metrics,
+            k_window_size=k_window_size,
         )
 
         save_artifact(artifact, output_path)

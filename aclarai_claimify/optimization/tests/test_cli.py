@@ -325,6 +325,7 @@ class TestCommandHandling:
             seed=42,
             verbose=True,  # Default verbose
             model_params={},  # Default model_params
+            k_window_size=None,
         )
     
     @patch('aclarai_claimify.cli.compile_component')
@@ -361,6 +362,7 @@ class TestCommandHandling:
             seed=42,  # Default value
             verbose=False,  # Quiet flag disables verbose
             model_params={},  # Default model_params
+            k_window_size=None,
         )
     
     @patch('aclarai_claimify.cli.compile_component')
@@ -553,6 +555,7 @@ class TestCommandHandling:
             component="selection",
             teacher_model="gpt-4o",
             model_params={},  # Default model_params
+            k_window_size=2,  # Default value
         )
     
     @patch('aclarai_claimify.cli.generate_dataset')
