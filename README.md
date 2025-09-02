@@ -99,6 +99,25 @@ The library's logic is broken into three main, reusable components:
 
 This Pydantic model is the central data structure that flows through the components. It holds the original input, the intermediate results from each stage, and the final extracted claims. You are responsible for passing this state object from one component to the next.
 
+## Configuration
+
+Claimify uses a cascading configuration system that allows you to easily override default settings.
+
+1.  **Default Settings**: The library ships with a default `settings` directory containing `config.yaml` (for the main library) and `optimization.yaml` (for the DSPy optimizer).
+2.  **Local Overrides**: You can override these defaults by creating your own `settings` directory in your project's root.
+
+### The `init` Command
+
+To get started with custom configurations, run the `init` command:
+
+```bash
+aclarai-claimify init
+```
+
+This will create a `settings/` folder in your current directory with copies of the default configuration files. You can then edit these files to change any settings you need. For example, to change the default model, you would edit `settings/config.yaml` and change the `default_model` value.
+
+When you run `aclarai-claimify`, it will automatically detect your local `settings/` directory and use it to override the default settings.
+
 ## Performance Optimization with DSPy (User Guide)
 
 The real power of Claimify comes from its ability to adapt to your specific data and models. You can compile your own optimized prompts to improve accuracy and reduce costs.
@@ -117,12 +136,24 @@ Create a JSONL file with high-quality examples of inputs and desired outputs for
 
 Use the built-in CLI to generate a new, optimized prompt artifact. This command will run the DSPy optimization process using your data and models.
 
+The `compile` command automatically uses the configuration from `settings/config.yaml`. If you want to use a custom optimizer configuration, you can use the `--config` flag.
+
 ```bash
+# Basic compilation
 aclarai-claimify compile \
     --component decomposition \
     --trainset ./my_decomposition_trainset.jsonl \
     --student-model gpt-3.5-turbo \
     --teacher-model gpt-4o \
+    --output-path ./custom_prompts/my_compiled_decomposition.json
+
+# With a custom optimizer config
+aclarai-claimify compile \
+    --component decomposition \
+    --trainset ./my_decomposition_trainset.jsonl \
+    --student-model gpt-3.5-turbo \
+    --teacher-model gpt-4o \
+    --config ./my_custom_optimizer.yaml \
     --output-path ./custom_prompts/my_compiled_decomposition.json
 ```
 

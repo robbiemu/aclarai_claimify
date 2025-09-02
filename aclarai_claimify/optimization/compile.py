@@ -19,6 +19,7 @@ except ImportError as e:
         "pip install 'aclarai-claimify[optimization]'"
     ) from e
 
+from ..data_models import ClaimifyConfig, OptimizationConfig
 from .artifacts import (
     OptimizerParams,
     ValidationMetrics,
@@ -52,38 +53,6 @@ class OptimizationError(Exception):
     """Raised when DSPy optimization fails."""
 
     pass
-
-
-def _load_optimizer_config(config_path: Path) -> dict:
-    """Load optimizer configuration from YAML file.
-
-    Args:
-        config_path: Path to the YAML configuration file
-
-    Returns:
-        Dictionary containing optimizer configuration
-
-    Raises:
-        ValueError: If the configuration is invalid
-        FileNotFoundError: If the config file doesn't exist
-    """
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    try:
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
-    except Exception as e:
-        raise ValueError(f"Failed to parse YAML config file: {e}") from e
-
-    # Validate required fields
-    if "optimizer_name" not in config:
-        raise ValueError("Config file must contain 'optimizer_name' field")
-
-    if "params" not in config:
-        raise ValueError("Config file must contain 'params' field")
-
-    return config
 
 
 
@@ -369,8 +338,9 @@ def compile_component(
     train_path: Path,
     student_model: str,
     teacher_model: str,
-    config_path: Path,
     output_path: Path,
+    claimify_config: ClaimifyConfig,
+    optimizer_config: OptimizationConfig,
     seed: Optional[int] = 42,
     verbose: bool = True,
     model_params: Optional[Dict[str, Any]] = None,
@@ -385,17 +355,18 @@ def compile_component(
         train_path: Path to training JSONL dataset
         student_model: Model name for final program execution
         teacher_model: Model name for optimization guidance
-        config_path: Path to optimizer configuration YAML file
         output_path: Where to save the compiled artifact
+        claimify_config: Main Claimify configuration object
+        optimizer_config: Optimizer configuration object
         seed: Random seed for reproducibility
         verbose: Whether to print detailed output
         model_params: Additional model parameters to pass to LiteLLM
+        k_window_size: Context window size used for the trainset
     """
 
     if verbose:
         print(f"🎯 Compiling {component} component")
         print(f"   Dataset: {train_path}")
-        print(f"   Config: {config_path}")
         print(f"   Output: {output_path}")
 
     try:
@@ -427,14 +398,10 @@ def compile_component(
         if verbose:
             print(f"   📊 Train: {len(trainset)}, Val: {len(valset)}")
 
-        # 4. Load optimizer configuration
+        # 4. Use provided optimizer configuration
         if verbose:
-            print("⚙️  Loading optimizer configuration...")
-        optimizer_config = _load_optimizer_config(config_path)
-        optimizer_name = optimizer_config["optimizer_name"]
-
-        if verbose:
-            print(f"   ✅ Using optimizer: {optimizer_name}")
+            print("⚙️  Using provided optimizer configuration...")
+            print(f"   ✅ Using optimizer: {optimizer_config.optimizer_name}")
 
         # 5. Initialize models
         student_lm, teacher_lm = _initialize_models(
@@ -448,7 +415,13 @@ def compile_component(
 
         # 7. Run optimization
         compiled_program = _run_optimizer(
-            program, trainset, valset, metric, teacher_lm, optimizer_config, verbose
+            program,
+            trainset,
+            valset,
+            metric,
+            teacher_lm,
+            optimizer_config.dict(),
+            verbose,
         )
 
         # 8. Evaluate on validation set
@@ -471,9 +444,9 @@ def compile_component(
 
         # Create optimizer params for artifact
         optimizer_params = OptimizerParams(
-            optimizer_name=optimizer_name,
+            optimizer_name=optimizer_config.optimizer_name,
             seed=seed,
-            other_params=optimizer_config.get("params", {}),
+            other_params=optimizer_config.params,
         )
 
         artifact = create_artifact_dict(

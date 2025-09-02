@@ -28,4 +28,14 @@ optimization = [
 aclarai-claimify = "aclarai_claimify.cli:main"
 
 [tool.setuptools]
-packages = ["aclarai_claimify"]
+packages = [
+    "aclarai_claimify",
+    "aclarai_claimify.components",
+    "aclarai_claimify.optimization",
+    "aclarai_claimify.optimization.tests",
+    "aclarai_claimify.prompts",
+    "aclarai_claimify.settings",
+    "aclarai_claimify.utils",
+]
+[tool.setuptools.package-data]
+"aclarai_claimify.settings" = ["*.yaml"]

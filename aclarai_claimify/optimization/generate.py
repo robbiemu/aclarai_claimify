@@ -14,6 +14,7 @@ import tqdm
 import litellm
 from litellm import RateLimitError
 
+from ..data_models import ClaimifyConfig
 from ..utils.context import create_context_window
 
 
@@ -355,8 +356,9 @@ def generate_dataset(
     output_file: Path,
     component: str,
     teacher_model: str,
+    claimify_config: ClaimifyConfig,
     model_params: Optional[Dict[str, Any]] = None,
-    k_window_size: int = 2,
+    k_window_size: Optional[int] = None,
 ) -> None:
     """Generate a gold standard dataset from raw text inputs.
 
@@ -365,8 +367,10 @@ def generate_dataset(
         output_file: Path to output JSONL file
         component: Component name (selection, disambiguation, decomposition)
         teacher_model: Teacher model name
+        claimify_config: The main Claimify configuration object.
         model_params: Additional model parameters to pass to LiteLLM
         k_window_size: Number of sentences before/after to include as context.
+                       If None, uses `context_window_p` from config.
 
     Raises:
         GenerationError: If generation fails
@@ -374,6 +378,11 @@ def generate_dataset(
     """
     if not input_file.exists():
         raise FileNotFoundError(f"Input file not found: {input_file}")
+
+    # Determine window size
+    if k_window_size is None:
+        k_window_size = claimify_config.context_window_p
+        print(f"Using context window size (k) from config: {k_window_size}")
 
     # Select the appropriate generator function
     generators = {
@@ -396,8 +405,12 @@ def generate_dataset(
     if not lines:
         raise GenerationError("Input file is empty")
 
+    # Use the specified teacher model, or fall back to the config's default
+    final_teacher_model = teacher_model or claimify_config.get_model_for_stage(
+        component
+    )
     print(
-        f"Generating {len(lines)} examples for {component} component using {teacher_model}..."
+        f"Generating {len(lines)} examples for {component} component using {final_teacher_model}..."
     )
     print("⚠️  WARNING: This may incur costs depending on your API provider and usage!")
 
@@ -411,13 +424,13 @@ def generate_dataset(
                 example = None
                 if component == "decomposition":
                     # For decomposition, the line is the disambiguated text
-                    example = generator(line, teacher_model, model_params)
+                    example = generator(line, final_teacher_model, model_params)
                 else:
                     # For selection and disambiguation, create a sliding context window
                     context = create_context_window(
                         all_sentences=lines, target_index=i, k=k_window_size
                     )
-                    example = generator(context, line, teacher_model, model_params)
+                    example = generator(context, line, final_teacher_model, model_params)
 
                 if example is not None:
                     f_out.write(json.dumps(example) + "\n")
