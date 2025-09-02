@@ -21,3 +21,23 @@ processing:
   timeout_seconds: 30
   temperature: 0.1
   max_tokens: 1000
+
+# NEW SECTION for the generate-dataset tool
+generate_dataset:
+  # User can choose the context generation method. Options: "semantic" or "static"
+  method: "semantic"
+
+  # Parameters for the "semantic" method
+  semantic:
+    embedder:
+      # Specifies which plugin to use from aclarai_claimify/embeddings/
+      type: "sentence_transformer"
+      model: "all-MiniLM-L6-v2"
+    context_params:
+      min_k: 3
+      max_k: 20
+      similarity_threshold: 0.75
+
+  # Parameters for the "static" method (the old behavior)
+  static:
+    k_window_size: 3 # The number of sentences before/after

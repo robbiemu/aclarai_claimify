@@ -22,6 +22,8 @@ optimization = [
     "litellm>=1.0.0",
     "rich>=13.0.0",
     "tqdm>=4.65.0",
+    "sentence-transformers",
+    "faiss-cpu",
 ]
 
 [project.scripts]
@@ -31,6 +33,7 @@ aclarai-claimify = "aclarai_claimify.cli:main"
 packages = [
     "aclarai_claimify",
     "aclarai_claimify.components",
+    "aclarai_claimify.embeddings",
     "aclarai_claimify.optimization",
     "aclarai_claimify.optimization.tests",
     "aclarai_claimify.prompts",

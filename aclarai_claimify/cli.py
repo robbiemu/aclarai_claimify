@@ -220,13 +220,6 @@ Examples:
         required=True,
         help="Powerful teacher model to use for generation (e.g., gpt-4o, claude-3-opus)",
     )
-    generate_parser.add_argument(
-        "--k-window-size",
-        type=int,
-        default=2,
-        help="Number of sentences to include before and after the target sentence as context (default: 2)",
-    )
-
     # Optional arguments
     generate_parser.add_argument(
         "--model-params",
@@ -563,7 +556,6 @@ def handle_generate_command(args: argparse.Namespace) -> None:
             component=args.component,
             teacher_model=args.teacher_model,
             model_params=model_params,
-            k_window_size=args.k_window_size,
             claimify_config=claimify_config,
         )
 
