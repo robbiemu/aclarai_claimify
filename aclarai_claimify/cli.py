@@ -132,6 +132,12 @@ Examples:
 
     # Optional arguments
     compile_parser.add_argument(
+        "--model-params",
+        type=str,
+        default="{}",
+        help='JSON string with additional model parameters (e.g., \'{"temperature": 0.7, "max_tokens": 1000}\')',
+    )
+    compile_parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -193,6 +199,14 @@ Examples:
         help="Powerful teacher model to use for generation (e.g., gpt-4o, claude-3-opus)",
     )
 
+    # Optional arguments
+    generate_parser.add_argument(
+        "--model-params",
+        type=str,
+        default="{}",
+        help='JSON string with additional model parameters (e.g., \'{"temperature": 0.7, "max_tokens": 1000}\')',
+    )
+
     return parser
 
 
@@ -212,7 +226,7 @@ def validate_compile_args(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         print(
-            f"💡 Hint: Make sure the file path is correct and the file exists",
+            "💡 Hint: Make sure the file path is correct and the file exists",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -229,7 +243,7 @@ def validate_compile_args(args: argparse.Namespace) -> None:
     if not args.config.exists():
         print(f"❌ Error: Config file not found: {args.config}", file=sys.stderr)
         print(
-            f"💡 Hint: Make sure the file path is correct and the file exists",
+            "💡 Hint: Make sure the file path is correct and the file exists",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -255,7 +269,7 @@ def validate_compile_args(args: argparse.Namespace) -> None:
         print(
             f"❌ Error: Output file already exists: {args.output_path}", file=sys.stderr
         )
-        print(f"💡 Hint: Use --overwrite to replace the existing file", file=sys.stderr)
+        print("💡 Hint: Use --overwrite to replace the existing file", file=sys.stderr)
         sys.exit(1)
 
     # Validate numeric arguments
@@ -280,7 +294,7 @@ def validate_generate_args(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         print(
-            f"💡 Hint: Make sure the file path is correct and the file exists",
+            "💡 Hint: Make sure the file path is correct and the file exists",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -309,7 +323,10 @@ def validate_generate_args(args: argparse.Namespace) -> None:
         print(
             f"❌ Error: Output file already exists: {args.output_file}", file=sys.stderr
         )
-        print(f"💡 Hint: Remove the existing file or specify a different output path", file=sys.stderr)
+        print(
+            "💡 Hint: Remove the existing file or specify a different output path",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -330,6 +347,17 @@ def handle_compile_command(args: argparse.Namespace) -> None:
         print("=" * 50)
 
     try:
+        # Parse model_params if provided
+        model_params = {}
+        if hasattr(args, "model_params") and args.model_params:
+            import json
+
+            try:
+                model_params = json.loads(args.model_params)
+            except json.JSONDecodeError as e:
+                print(f"\n❌ Invalid JSON in --model-params: {e}", file=sys.stderr)
+                sys.exit(1)
+
         # Run compilation
         compile_component(
             component=args.component,
@@ -340,56 +368,58 @@ def handle_compile_command(args: argparse.Namespace) -> None:
             output_path=args.output_path,
             seed=args.seed,
             verbose=verbose,
+            model_params=model_params,
         )
 
         if verbose:
             print("\n🎉 Success! Your optimized component is ready to use.")
             print(f"📁 Artifact saved: {args.output_path}")
             print("\n💡 Next steps:")
-            print(f"   1. Load the artifact in your components:")
+            print("   1. Load the artifact in your components:")
             print(
-                f"      from aclarai_claimify.optimization.artifacts import load_artifact"
+                "      from aclarai_claimify.optimization.artifacts import load_artifact"
             )
             print(f"      artifact = load_artifact(Path('{args.output_path}'))")
-            print(f"   2. See the README for integration examples")
+            print("   2. See the README for integration examples")
 
     except DataValidationError as e:
         print(f"\n❌ Dataset Validation Error: {e}", file=sys.stderr)
-        print(f"\n💡 Dataset Schema Help:", file=sys.stderr)
+        print("\n💡 Dataset Schema Help:", file=sys.stderr)
         print_schema_help(args.component)
         sys.exit(1)
 
     except ModelConfigError as e:
         print(f"\n❌ Model Configuration Error: {e}", file=sys.stderr)
         if "api_key" in str(e).lower():
-            print(f"\n💡 Quick fix:", file=sys.stderr)
-            print(f"   export OPENAI_API_KEY=your-api-key-here", file=sys.stderr)
+            print("\n💡 Quick fix:", file=sys.stderr)
+            print("   Set your model API key in environment variables", file=sys.stderr)
+            print("   (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)", file=sys.stderr)
         sys.exit(1)
 
     except DSPyVersionError as e:
         print(f"\n❌ DSPy Compatibility Error: {e}", file=sys.stderr)
-        print(f"\n💡 Try updating DSPy:", file=sys.stderr)
-        print(f"   pip install --upgrade dspy-ai", file=sys.stderr)
+        print("\n💡 Try updating DSPy:", file=sys.stderr)
+        print("   pip install --upgrade dspy-ai", file=sys.stderr)
         sys.exit(1)
 
     except OptimizationError as e:
         print(f"\n❌ Optimization Error: {e}", file=sys.stderr)
-        print(f"\n💡 Common solutions:", file=sys.stderr)
-        print(f"   1. Check your internet connection", file=sys.stderr)
-        print(f"   2. Verify your API key has sufficient credits", file=sys.stderr)
-        print(f"   3. Try with a smaller dataset or fewer trials", file=sys.stderr)
+        print("\n💡 Common solutions:", file=sys.stderr)
+        print("   1. Check your internet connection", file=sys.stderr)
+        print("   2. Verify your API key has sufficient credits", file=sys.stderr)
+        print("   3. Try with a smaller dataset or fewer trials", file=sys.stderr)
         sys.exit(1)
 
     except KeyboardInterrupt:
-        print(f"\n⏹️  Compilation interrupted by user", file=sys.stderr)
+        print("\n⏹️  Compilation interrupted by user", file=sys.stderr)
         sys.exit(130)  # Standard exit code for SIGINT
 
     except Exception as e:
         print(f"\n💥 Unexpected error: {e}", file=sys.stderr)
-        print(f"\n💡 This might be a bug. Please report it with:", file=sys.stderr)
-        print(f"   - Your command line arguments", file=sys.stderr)
-        print(f"   - The error message above", file=sys.stderr)
-        print(f"   - Your Python and DSPy versions", file=sys.stderr)
+        print("\n💡 This might be a bug. Please report it with:", file=sys.stderr)
+        print("   - Your command line arguments", file=sys.stderr)
+        print("   - The error message above", file=sys.stderr)
+        print("   - Your Python and DSPy versions", file=sys.stderr)
         sys.exit(1)
 
 
@@ -413,6 +443,20 @@ def handle_generate_command(args: argparse.Namespace) -> None:
     # Validate arguments
     validate_generate_args(args)
 
+    # Parse model_params if provided
+    model_params = {}
+    if hasattr(args, "model_params") and args.model_params:
+        import json
+
+        try:
+            model_params = json.loads(args.model_params)
+        except json.JSONDecodeError as e:
+            print(
+                f"\n❌ Invalid JSON in --model-params: {e}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     print("🚀 Aclarai Claimify - Gold Standard Dataset Generation")
     print("=" * 55)
 
@@ -423,35 +467,36 @@ def handle_generate_command(args: argparse.Namespace) -> None:
             output_file=args.output_file,
             component=args.component,
             teacher_model=args.teacher_model,
+            model_params=model_params,
         )
 
         print("\n🎉 Success! Your gold standard dataset is ready.")
         print(f"📁 Dataset saved: {args.output_file}")
         print("\n💡 Next steps:")
-        print(f"   1. Review the generated dataset for quality")
-        print(f"   2. Use it to compile your component:")
-        print(f"      aclarai-claimify compile \\")
+        print("   1. Review the generated dataset for quality")
+        print("   2. Use it to compile your component:")
+        print("      aclarai-claimify compile \\")
         print(f"          --component {args.component} \\")
         print(f"          --trainset {args.output_file} \\")
-        print(f"          --student-model <your-student-model> \\")
+        print("          --student-model <your-student-model> \\")
         print(f"          --teacher-model {args.teacher_model} \\")
-        print(f"          --config <optimizer-config.yaml> \\")
-        print(f"          --output-path <compiled-artifact.json>")
+        print("          --config <optimizer-config.yaml> \\")
+        print("          --output-path <compiled-artifact.json>")
 
     except GenerationError as e:
         print(f"\n❌ Dataset Generation Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     except KeyboardInterrupt:
-        print(f"\n⏹️  Generation interrupted by user", file=sys.stderr)
+        print("\n⏹️  Generation interrupted by user", file=sys.stderr)
         sys.exit(130)  # Standard exit code for SIGINT
 
     except Exception as e:
         print(f"\n💥 Unexpected error: {e}", file=sys.stderr)
-        print(f"\n💡 This might be a bug. Please report it with:", file=sys.stderr)
-        print(f"   - Your command line arguments", file=sys.stderr)
-        print(f"   - The error message above", file=sys.stderr)
-        print(f"   - Your Python and DSPy versions", file=sys.stderr)
+        print("\n💡 This might be a bug. Please report it with:", file=sys.stderr)
+        print("   - Your command line arguments", file=sys.stderr)
+        print("   - The error message above", file=sys.stderr)
+        print("   - Your Python and DSPy versions", file=sys.stderr)
         sys.exit(1)
 
 

@@ -323,7 +323,8 @@ class TestCommandHandling:
             config_path=Path("/tmp/config.yaml"),
             output_path=Path("/tmp/output.json"),
             seed=42,
-            verbose=True  # Default verbose
+            verbose=True,  # Default verbose
+            model_params={},  # Default model_params
         )
     
     @patch('aclarai_claimify.cli.compile_component')
@@ -358,7 +359,8 @@ class TestCommandHandling:
             config_path=Path("/tmp/config.yaml"),
             output_path=Path("/tmp/output.json"),
             seed=42,  # Default value
-            verbose=False  # Quiet flag disables verbose
+            verbose=False,  # Quiet flag disables verbose
+            model_params={},  # Default model_params
         )
     
     @patch('aclarai_claimify.cli.compile_component')
@@ -550,6 +552,7 @@ class TestCommandHandling:
             output_file=Path("/tmp/output.jsonl"),
             component="selection",
             teacher_model="gpt-4o",
+            model_params={},  # Default model_params
         )
     
     @patch('aclarai_claimify.cli.generate_dataset')

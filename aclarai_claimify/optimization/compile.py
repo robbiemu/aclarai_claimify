@@ -5,9 +5,8 @@ the entire process of optimizing Claimify components using DSPy.
 """
 
 import os
-import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 try:
     import dspy
@@ -15,22 +14,12 @@ try:
 except ImportError as e:
     missing = "yaml" if "yaml" in str(e) else "dspy"
     raise ImportError(
-        f"DSPy optimization features require additional dependencies. Install with:\
-"
-        f"pip install 'aclarai-claimify[optimization]'"
-    ) from e
-
-try:
-    import litellm
-except ImportError:
-    raise ImportError(
-        "DSPy optimization features require litellm. Install with:\
+        "DSPy optimization features require additional dependencies. Install with:\
 "
         "pip install 'aclarai-claimify[optimization]'"
-    )
+    ) from e
 
 from .artifacts import (
-    CompiledArtifact,
     OptimizerParams,
     ValidationMetrics,
     FewShotExample,
@@ -67,51 +56,44 @@ class OptimizationError(Exception):
 
 def _load_optimizer_config(config_path: Path) -> dict:
     """Load optimizer configuration from YAML file.
-    
+
     Args:
         config_path: Path to the YAML configuration file
-        
+
     Returns:
         Dictionary containing optimizer configuration
-        
+
     Raises:
         ValueError: If the configuration is invalid
         FileNotFoundError: If the config file doesn't exist
     """
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
-    
+
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config = yaml.safe_load(f)
     except Exception as e:
         raise ValueError(f"Failed to parse YAML config file: {e}") from e
-    
+
     # Validate required fields
     if "optimizer_name" not in config:
         raise ValueError("Config file must contain 'optimizer_name' field")
-    
+
     if "params" not in config:
         raise ValueError("Config file must contain 'params' field")
-        
+
     return config
 
 
-def _check_openai_api_key() -> None:
-    """Check that OPENAI_API_KEY is available in environment.
 
-    Raises:
-        ModelConfigError: If API key is not found
-    """
-    if not os.getenv("OPENAI_API_KEY"):
-        raise ModelConfigError(
-            "OPENAI_API_KEY environment variable is required. "
-            "Please set it with: export OPENAI_API_KEY=your-key-here"
-        )
 
 
 def _initialize_models(
-    student_model: str, teacher_model: str, verbose: bool = True
+    student_model: str,
+    teacher_model: str,
+    verbose: bool = True,
+    model_params: Optional[Dict[str, Any]] = None,
 ) -> tuple:
     """Initialize student and teacher language models.
 
@@ -119,25 +101,21 @@ def _initialize_models(
         student_model: Name of the student model (for final program)
         teacher_model: Name of the teacher model (for optimization)
         verbose: Whether to print progress messages
+        model_params: Additional model parameters to pass to LiteLLM
 
     Returns:
-        Tuple of (student_lm, teacher_lm)
+        Tuple of (student_lm, teacher_lm) dspy.LM instances
 
     Raises:
-        ModelConfigError: If model initialization fails
+        ModelConfigError: If model configuration fails
         DSPyVersionError: If DSPy version is incompatible
     """
-    _check_openai_api_key()
-
-    if verbose:
-        print(
-            f"🔧 Initializing models: student={student_model}, teacher={teacher_model}"
-        )
+    
 
     try:
         # Use the new DSPy API (dspy-ai>=2.4.0)
-        student_lm = dspy.LM(f"openai/{student_model}")
-        teacher_lm = dspy.LM(f"openai/{teacher_model}")
+        student_lm = dspy.LM(student_model, **(model_params or {}))
+        teacher_lm = dspy.LM(teacher_model, **(model_params or {}))
         if verbose:
             print("   ✅ Using dspy.LM API")
 
@@ -183,7 +161,7 @@ def _run_optimizer(
     """
     optimizer_name = optimizer_config["optimizer_name"]
     params = optimizer_config["params"]
-    
+
     if verbose:
         print(
             f"🚀 Running optimization with {len(trainset)} train, {len(valset)} val examples"
@@ -197,16 +175,16 @@ def _run_optimizer(
             "bootstrap-fewshot": dspy.teleprompt.BootstrapFewShot,
             # Add more optimizers here as needed
         }
-        
+
         if optimizer_name not in optimizer_classes:
             raise OptimizationError(f"Unsupported optimizer: {optimizer_name}")
-            
+
         optimizer_class = optimizer_classes[optimizer_name]
-        
+
         # Add metric to params
         optimizer_params = params.copy()
         optimizer_params["metric"] = metric
-        
+
         # Try to initialize optimizer with teacher model
         try:
             optimizer = optimizer_class(teacher=teacher_lm, **optimizer_params)
@@ -267,33 +245,37 @@ def _evaluate_program(
             score = metric(example, prediction)
         except Exception as e:
             if verbose:
-                print(f"   ⚠️  Example {i+1} failed: {e}")
-        
+                print(f"   ⚠️  Example {i + 1} failed: {e}")
+
         # Always append the score (0.0 for failed examples)
         scores.append(score)
-        
+
         # Collect diagnostic info (limit to first 5 examples)
         # Always collect diagnostics, even for failed examples
         if i < 5:
             try:
-                # Convert inputs to a set of keys for comparison to avoid mock issues
-                input_keys = set(inputs.keys()) if hasattr(inputs, 'keys') else set()
-                diagnostics.append({
-                    'example_id': i,
-                    'score': score,
-                    'inputs': inputs,
-                    'expected_output': {k: v for k, v in example.__dict__.items() 
-                                     if k not in input_keys},
-                })
+                inputs_dict = dict(example.inputs().items())
+                labels_dict = dict(example.labels().items())
+
+                diagnostics.append(
+                    {
+                        "example_id": i,
+                        "score": score,
+                        "inputs": inputs_dict,
+                        "expected_output": labels_dict,
+                    }
+                )
             except Exception as diag_e:
                 # If we can't collect diagnostics, at least include basic info
-                diagnostics.append({
-                    'example_id': i,
-                    'score': score,
-                    'inputs': {},
-                    'expected_output': {},
-                    'error': str(diag_e)
-                })
+                diagnostics.append(
+                    {
+                        "example_id": i,
+                        "score": score,
+                        "inputs": {},
+                        "expected_output": {},
+                        "error": str(diag_e),
+                    }
+                )
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
@@ -391,6 +373,7 @@ def compile_component(
     output_path: Path,
     seed: Optional[int] = 42,
     verbose: bool = True,
+    model_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Compile a Claimify component using DSPy optimization.
 
@@ -404,11 +387,10 @@ def compile_component(
         config_path: Path to optimizer configuration YAML file
         output_path: Where to save the compiled artifact
         seed: Random seed for reproducibility
-        verbose: Whether to print progress messages
-
-    Raises:
-        Various exceptions for different failure modes
+        verbose: Whether to print detailed output
+        model_params: Additional model parameters to pass to LiteLLM
     """
+
     if verbose:
         print(f"🎯 Compiling {component} component")
         print(f"   Dataset: {train_path}")
@@ -449,13 +431,13 @@ def compile_component(
             print("⚙️  Loading optimizer configuration...")
         optimizer_config = _load_optimizer_config(config_path)
         optimizer_name = optimizer_config["optimizer_name"]
-        
+
         if verbose:
             print(f"   ✅ Using optimizer: {optimizer_name}")
 
         # 5. Initialize models
         student_lm, teacher_lm = _initialize_models(
-            student_model, teacher_model, verbose
+            student_model, teacher_model, verbose, model_params
         )
 
         # 6. Build program
@@ -490,7 +472,7 @@ def compile_component(
         optimizer_params = OptimizerParams(
             optimizer_name=optimizer_name,
             seed=seed,
-            other_params=optimizer_config.get("params", {})
+            other_params=optimizer_config.get("params", {}),
         )
 
         artifact = create_artifact_dict(

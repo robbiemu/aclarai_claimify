@@ -108,12 +108,13 @@ def exponential_backoff(
     return delay
 
 
-def call_teacher_model(prompt: str, model: str) -> str:
+def call_teacher_model(prompt: str, model: str, model_params: Optional[Dict[str, Any]] = None) -> str:
     """Call the teacher model with the given prompt.
 
     Args:
         prompt: The prompt to send to the model
         model: The model name to use
+        model_params: Additional model parameters to pass to LiteLLM
 
     Returns:
         The model's response text
@@ -124,12 +125,19 @@ def call_teacher_model(prompt: str, model: str) -> str:
     max_retries = 5
     for attempt in range(max_retries):
         try:
-            response = litellm.completion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=500,
-            )
+            # Prepare the completion call with model_params
+            completion_kwargs = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": 500,
+            }
+            
+            # Add any additional model parameters
+            if model_params:
+                completion_kwargs.update(model_params)
+            
+            response = litellm.completion(**completion_kwargs)
             return response.choices[0].message.content.strip()
         except RateLimitError as e:
             if attempt < max_retries - 1:
@@ -196,7 +204,7 @@ def parse_json_response(response: str) -> Dict[str, Any]:
 
 
 def generate_selection_example(
-    context: str, target: str, teacher_model: str
+    context: str, target: str, teacher_model: str, model_params: Optional[Dict[str, Any]] = None
 ) -> Optional[Dict[str, Any]]:
     """Generate a single example for the selection component.
 
@@ -204,6 +212,7 @@ def generate_selection_example(
         context: Context text
         target: Target sentence to evaluate
         teacher_model: Teacher model name
+        model_params: Additional model parameters to pass to LiteLLM
 
     Returns:
         Generated example dictionary or None if failed
@@ -213,7 +222,7 @@ def generate_selection_example(
     )
 
     try:
-        response = call_teacher_model(prompt, teacher_model)
+        response = call_teacher_model(prompt, teacher_model, model_params)
         parsed = parse_json_response(response)
 
         # Validate required fields
@@ -236,7 +245,7 @@ def generate_selection_example(
 
 
 def generate_disambiguation_example(
-    context: str, target: str, teacher_model: str
+    context: str, target: str, teacher_model: str, model_params: Optional[Dict[str, Any]] = None
 ) -> Optional[Dict[str, Any]]:
     """Generate a single example for the disambiguation component.
 
@@ -244,6 +253,7 @@ def generate_disambiguation_example(
         context: Context text
         target: Target sentence to disambiguate
         teacher_model: Teacher model name
+        model_params: Additional model parameters to pass to LiteLLM
 
     Returns:
         Generated example dictionary or None if failed
@@ -253,7 +263,7 @@ def generate_disambiguation_example(
     )
 
     try:
-        response = call_teacher_model(prompt, teacher_model)
+        response = call_teacher_model(prompt, teacher_model, model_params)
         parsed = parse_json_response(response)
 
         # Validate required fields
@@ -276,13 +286,14 @@ def generate_disambiguation_example(
 
 
 def generate_decomposition_example(
-    disambiguated_text: str, teacher_model: str
+    disambiguated_text: str, teacher_model: str, model_params: Optional[Dict[str, Any]] = None
 ) -> Optional[Dict[str, Any]]:
     """Generate a single example for the decomposition component.
 
     Args:
         disambiguated_text: Text to decompose
         teacher_model: Teacher model name
+        model_params: Additional model parameters to pass to LiteLLM
 
     Returns:
         Generated example dictionary or None if failed
@@ -292,7 +303,7 @@ def generate_decomposition_example(
     )
 
     try:
-        response = call_teacher_model(prompt, teacher_model)
+        response = call_teacher_model(prompt, teacher_model, model_params)
         parsed = parse_json_response(response)
 
         # Validate required fields
@@ -342,6 +353,7 @@ def generate_dataset(
     output_file: Path,
     component: str,
     teacher_model: str,
+    model_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Generate a gold standard dataset from raw text inputs.
 
@@ -350,6 +362,7 @@ def generate_dataset(
         output_file: Path to output JSONL file
         component: Component name (selection, disambiguation, decomposition)
         teacher_model: Teacher model name
+        model_params: Additional model parameters to pass to LiteLLM
 
     Raises:
         GenerationError: If generation fails
@@ -394,13 +407,13 @@ def generate_dataset(
                 example = None
                 if component == "decomposition":
                     # For decomposition, the line is the disambiguated text
-                    example = generator(line, teacher_model)
+                    example = generator(line, teacher_model, model_params)
                 else:
                     # For selection and disambiguation, we need context and target
                     # We'll create a simple context with just the sentence itself
                     # In practice, users should provide better context
                     context = f"[0] {line}"
-                    example = generator(context, line, teacher_model)
+                    example = generator(context, line, teacher_model, model_params)
 
                 if example is not None:
                     f_out.write(json.dumps(example) + "\n")
