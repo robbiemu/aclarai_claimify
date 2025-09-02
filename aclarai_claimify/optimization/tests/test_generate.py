@@ -3,16 +3,20 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Check if required dependencies are available
+pytest.importorskip("faiss")
+
+from aclarai_claimify.data_models import ClaimifyConfig, GenerateDatasetConfig, GenerateDatasetSemanticConfig, GenerateDatasetSemanticEmbedderConfig, GenerateDatasetSemanticContextConfig, GenerateDatasetStaticConfig
 from aclarai_claimify.optimization.generate import (
-    generate_dataset,
-    generate_selection_example,
-    generate_disambiguation_example,
-    generate_decomposition_example,
     GenerationError,
+    generate_dataset,
+    generate_decomposition_example,
+    generate_disambiguation_example,
+    generate_selection_example,
     parse_json_response,
 )
 
@@ -28,17 +32,13 @@ class TestParseJSONResponse:
 
     def test_parse_json_with_code_block(self):
         """Test parsing JSON response with markdown code block."""
-        response = '```json\
-{"selected": true, "confidence": 0.9, "reasoning": "test"}\
-```'
+        response = '```json\n{"selected": true, "confidence": 0.9, "reasoning": "test"}\n```'
         result = parse_json_response(response)
         assert result == {"selected": True, "confidence": 0.9, "reasoning": "test"}
 
     def test_parse_json_with_language_identifier(self):
         """Test parsing JSON response with language identifier."""
-        response = '```json\
-{"selected": true, "confidence": 0.9, "reasoning": "test"}\
-```'
+        response = '```json\n{"selected": true, "confidence": 0.9, "reasoning": "test"}\n```'
         result = parse_json_response(response)
         assert result == {"selected": True, "confidence": 0.9, "reasoning": "test"}
 
@@ -152,8 +152,28 @@ class TestGenerateExamples:
         assert candidate["confidence"] == 0.95
 
 
+@pytest.mark.skipif(not pytest.importorskip("faiss"), reason="faiss not installed")
 class TestGenerateDataset:
     """Test the main dataset generation function."""
+
+    def setup_method(self):
+        """Set up a mock ClaimifyConfig for the tests."""
+        self.mock_config = MagicMock(spec=ClaimifyConfig)
+        self.mock_config.generate_dataset = GenerateDatasetConfig(
+            method="semantic",
+            semantic=GenerateDatasetSemanticConfig(
+                embedder=GenerateDatasetSemanticEmbedderConfig(
+                    type="sentence_transformer",
+                    model="all-MiniLM-L6-v2"
+                ),
+                context_params=GenerateDatasetSemanticContextConfig(
+                    min_k=3,
+                    max_k=20,
+                    similarity_threshold=0.75
+                )
+            ),
+            static=GenerateDatasetStaticConfig(k_window_size=3)
+        )
 
     def test_generate_dataset_nonexistent_input(self):
         """Test dataset generation with nonexistent input file."""
@@ -163,6 +183,7 @@ class TestGenerateDataset:
                 output_file=Path("/tmp/output.jsonl"),
                 component="selection",
                 teacher_model="gpt-4o",
+                claimify_config=self.mock_config,
             )
 
     def test_generate_dataset_empty_input(self):
@@ -177,6 +198,7 @@ class TestGenerateDataset:
                 output_file=Path("/tmp/output.jsonl"),
                 component="selection",
                 teacher_model="gpt-4o",
+                claimify_config=self.mock_config,
             )
 
         # Clean up
@@ -186,8 +208,7 @@ class TestGenerateDataset:
         """Test dataset generation with invalid component."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
-                "Test sentence.\
-"
+                "Test sentence.\n"
             )
             input_file = Path(f.name)
 
@@ -197,6 +218,7 @@ class TestGenerateDataset:
                 output_file=Path("/tmp/output.jsonl"),
                 component="invalid-component",
                 teacher_model="gpt-4o",
+                claimify_config=self.mock_config,
             )
 
         # Clean up
@@ -211,8 +233,7 @@ class TestGenerateDataset:
         # Create a temporary input file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
-                "It failed with error code 500.\
-"
+                "It failed with error code 500.\n"
             )
             input_file = Path(f.name)
 
@@ -226,6 +247,7 @@ class TestGenerateDataset:
                 output_file=output_file,
                 component="selection",
                 teacher_model="gpt-4o",
+                claimify_config=self.mock_config,
             )
 
             # Verify the output file was created
@@ -271,8 +293,7 @@ class TestGenerateDataset:
         # Create a temporary input file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write(
-                "The system failed with error code 500.\
-"
+                "The system failed with error code 500.\n"
             )
             input_file = Path(f.name)
 
@@ -286,6 +307,7 @@ class TestGenerateDataset:
                 output_file=output_file,
                 component="decomposition",
                 teacher_model="gpt-4o",
+                claimify_config=self.mock_config,
             )
 
             # Verify the output file was created

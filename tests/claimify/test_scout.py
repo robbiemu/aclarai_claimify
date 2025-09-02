@@ -1,4 +1,9 @@
 from unittest.mock import patch, MagicMock
+
+import pytest
+
+pytest.importorskip("langsmith")
+
 from aclarai_claimify.scout.main import run
 from aclarai_claimify.data_models import (
     ClaimifyConfig,

@@ -232,6 +232,8 @@ aclarai-claimify compile \
 
 Contributions are welcome! Please feel free to submit a pull request or open an issue.
 
+During testing, you may notice some deprecation warnings from external dependencies. These are documented in [EXTERNAL_DEPENDENCY_WARNINGS.md](docs/EXTERNAL_DEPENDENCY_WARNINGS.md) and are outside the scope of this project to fix.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

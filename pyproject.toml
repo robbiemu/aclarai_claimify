@@ -26,6 +26,7 @@ optimization = [
 ]
 agent = [
     "langgraph",
+    "langgraph-checkpoint-sqlite",
     "langsmith",
     "litellm",
     "beautifulsoup4",
@@ -50,3 +51,4 @@ packages = [
 ]
 [tool.setuptools.package-data]
 "aclarai_claimify.settings" = ["*.yaml"]
+"aclarai_claimify" = ["../docs/*.md"]

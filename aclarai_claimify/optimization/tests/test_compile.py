@@ -10,6 +10,7 @@ import pytest
 # Add the project root to sys.path so we can import the modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from aclarai_claimify.data_models import ClaimifyConfig, OptimizationConfig
 from aclarai_claimify.optimization.compile import (
     _initialize_models,
     _run_optimizer,
@@ -535,14 +536,24 @@ class TestCompileComponent:
         mock_extract_prompt.return_value = "Test prompt"
         mock_create.return_value = {"test": "artifact"}
 
+        # Create a proper mock optimizer config with required attributes
+        mock_optimizer_config = MagicMock(spec=OptimizationConfig)
+        mock_optimizer_config.optimizer_name = "bootstrap-fewshot"
+        mock_optimizer_config.params = {"max_bootstrapped_demos": 8, "max_labeled_demos": 40}
+        mock_optimizer_config.dict.return_value = {
+            "optimizer_name": "bootstrap-fewshot",
+            "params": {"max_bootstrapped_demos": 8, "max_labeled_demos": 40}
+        }
+
         # Test compilation
         compile_component(
             component="selection",
             train_path=Path("/tmp/train.jsonl"),
             student_model="gpt-3.5-turbo",
             teacher_model="gpt-4o",
-            config_path=Path("/tmp/test_config.yaml"),
             output_path=Path("/tmp/output.json"),
+            claimify_config=MagicMock(spec=ClaimifyConfig),
+            optimizer_config=mock_optimizer_config,
         )
 
         # Verify all the calls were made
@@ -589,12 +600,18 @@ class TestCompileComponent:
         ) as mock_load:
             mock_load.side_effect = DataValidationError("Invalid data")
 
+            # Create a proper mock optimizer config with required attributes
+            mock_optimizer_config = MagicMock(spec=OptimizationConfig)
+            mock_optimizer_config.optimizer_name = "bootstrap-fewshot"
+            mock_optimizer_config.params = {"max_bootstrapped_demos": 8, "max_labeled_demos": 40}
+
             with pytest.raises(DataValidationError):
                 compile_component(
                     component="selection",
                     train_path=Path("/tmp/train.jsonl"),
                     student_model="gpt-3.5-turbo",
                     teacher_model="gpt-4o",
-                    config_path=Path("/tmp/test_config.yaml"),
                     output_path=Path("/tmp/output.json"),
+                    claimify_config=MagicMock(spec=ClaimifyConfig),
+                    optimizer_config=mock_optimizer_config,
                 )

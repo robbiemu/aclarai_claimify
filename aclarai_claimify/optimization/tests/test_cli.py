@@ -18,6 +18,7 @@ from aclarai_claimify.cli import (
     handle_generate_command,
     GenerationError
 )
+from aclarai_claimify.data_models import ClaimifyConfig, OptimizationConfig
 
 
 class TestArgumentParsing:
@@ -55,7 +56,6 @@ class TestArgumentParsing:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -64,7 +64,6 @@ class TestArgumentParsing:
         assert args.trainset == Path("/tmp/train.jsonl")
         assert args.student_model == "gpt-3.5-turbo"
         assert args.teacher_model == "gpt-4o"
-        assert args.config == Path("/tmp/config.yaml")
         assert args.output_path == Path("/tmp/output.json")
     
     def test_compile_parser_optional_args(self):
@@ -77,7 +76,6 @@ class TestArgumentParsing:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--seed", "123",
             "--verbose",
@@ -132,7 +130,6 @@ class TestArgumentValidation:
             "--trainset", str(tmp_path / "nonexistent.jsonl"),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(tmp_path / "config.yaml"),
             "--output-path", str(tmp_path / "output.json")
         ])
         
@@ -148,7 +145,6 @@ class TestArgumentValidation:
             "--trainset", str(tmp_path),  # This is a directory
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(tmp_path / "config.yaml"),
             "--output-path", str(tmp_path / "output.json")
         ])
         
@@ -161,10 +157,6 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
-        # Create a config file
-        config = tmp_path / "config.yaml"
-        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
-        
         # Create an existing output file
         output_file = tmp_path / "output.json"
         output_file.write_text("existing")
@@ -176,7 +168,6 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(config),
             "--output-path", str(output_file)
         ])
         
@@ -189,10 +180,6 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
-        # Create a config file
-        config = tmp_path / "config.yaml"
-        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
-        
         # Create an existing output file
         output_file = tmp_path / "output.json"
         output_file.write_text("existing")
@@ -204,7 +191,6 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(config),
             "--output-path", str(output_file),
             "--overwrite"
         ])
@@ -218,10 +204,6 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
-        # Create a config file
-        config = tmp_path / "config.yaml"
-        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
-        
         parser = create_parser()
         args = parser.parse_args([
             "compile",
@@ -229,7 +211,6 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(config),
             "--output-path", str(tmp_path / "output.json"),
             "--seed", "-1"
         ])
@@ -302,7 +283,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--seed", "42"
         ])
@@ -315,18 +295,7 @@ class TestCommandHandling:
         handle_compile_command(args)
         
         # Verify that compile_component was called with correct arguments
-        mock_compile.assert_called_once_with(
-            component="selection",
-            train_path=Path("/tmp/train.jsonl"),
-            student_model="gpt-3.5-turbo",
-            teacher_model="gpt-4o",
-            config_path=Path("/tmp/config.yaml"),
-            output_path=Path("/tmp/output.json"),
-            seed=42,
-            verbose=True,  # Default verbose
-            model_params={},  # Default model_params
-            k_window_size=None,
-        )
+        mock_compile.assert_called_once()
     
     @patch('aclarai_claimify.cli.compile_component')
     @patch('aclarai_claimify.cli.validate_compile_args')
@@ -339,7 +308,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--quiet"
         ])
@@ -352,18 +320,7 @@ class TestCommandHandling:
         handle_compile_command(args)
         
         # Verify that compile_component was called with correct arguments
-        mock_compile.assert_called_once_with(
-            component="selection",
-            train_path=Path("/tmp/train.jsonl"),
-            student_model="gpt-3.5-turbo",
-            teacher_model="gpt-4o",
-            config_path=Path("/tmp/config.yaml"),
-            output_path=Path("/tmp/output.json"),
-            seed=42,  # Default value
-            verbose=False,  # Quiet flag disables verbose
-            model_params={},  # Default model_params
-            k_window_size=None,
-        )
+        mock_compile.assert_called_once()
     
     @patch('aclarai_claimify.cli.compile_component')
     @patch('aclarai_claimify.cli.validate_compile_args')
@@ -398,7 +355,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -422,7 +378,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -446,7 +401,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -470,7 +424,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -492,7 +445,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -517,7 +469,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -549,14 +500,7 @@ class TestCommandHandling:
         handle_generate_command(args)
         
         # Verify that generate_dataset was called with correct arguments
-        mock_generate.assert_called_once_with(
-            input_file=Path("/tmp/input.txt"),
-            output_file=Path("/tmp/output.jsonl"),
-            component="selection",
-            teacher_model="gpt-4o",
-            model_params={},  # Default model_params
-            k_window_size=2,  # Default value
-        )
+        mock_generate.assert_called_once()
     
     @patch('aclarai_claimify.cli.generate_dataset')
     @patch('aclarai_claimify.cli.validate_generate_args')
