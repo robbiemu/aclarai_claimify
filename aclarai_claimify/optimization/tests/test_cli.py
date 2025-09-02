@@ -52,6 +52,7 @@ class TestArgumentParsing:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -60,6 +61,7 @@ class TestArgumentParsing:
         assert args.trainset == Path("/tmp/train.jsonl")
         assert args.student_model == "gpt-3.5-turbo"
         assert args.teacher_model == "gpt-4o"
+        assert args.config == Path("/tmp/config.yaml")
         assert args.output_path == Path("/tmp/output.json")
     
     def test_compile_parser_optional_args(self):
@@ -72,19 +74,14 @@ class TestArgumentParsing:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--seed", "123",
-            "--k-shots", "10",
-            "--max-trials", "50",
-            "--optimizer", "bootstrap-fewshot",
             "--verbose",
             "--overwrite"
         ])
         
         assert args.seed == 123
-        assert args.k_shots == 10
-        assert args.max_trials == 50
-        assert args.optimizer == "bootstrap-fewshot"
         assert args.verbose is True
         assert args.quiet is False  # Default
         assert args.overwrite is True
@@ -114,6 +111,7 @@ class TestArgumentValidation:
             "--trainset", str(tmp_path / "nonexistent.jsonl"),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", str(tmp_path / "config.yaml"),
             "--output-path", str(tmp_path / "output.json")
         ])
         
@@ -129,6 +127,7 @@ class TestArgumentValidation:
             "--trainset", str(tmp_path),  # This is a directory
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", str(tmp_path / "config.yaml"),
             "--output-path", str(tmp_path / "output.json")
         ])
         
@@ -141,6 +140,10 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
+        # Create a config file
+        config = tmp_path / "config.yaml"
+        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
+        
         # Create an existing output file
         output_file = tmp_path / "output.json"
         output_file.write_text("existing")
@@ -152,6 +155,7 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", str(config),
             "--output-path", str(output_file)
         ])
         
@@ -164,6 +168,10 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
+        # Create a config file
+        config = tmp_path / "config.yaml"
+        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
+        
         # Create an existing output file
         output_file = tmp_path / "output.json"
         output_file.write_text("existing")
@@ -175,6 +183,7 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", str(config),
             "--output-path", str(output_file),
             "--overwrite"
         ])
@@ -188,6 +197,10 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
+        # Create a config file
+        config = tmp_path / "config.yaml"
+        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
+        
         parser = create_parser()
         args = parser.parse_args([
             "compile",
@@ -195,48 +208,9 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", str(config),
             "--output-path", str(tmp_path / "output.json"),
             "--seed", "-1"
-        ])
-        
-        with pytest.raises(SystemExit):
-            validate_compile_args(args)
-    
-    def test_validate_compile_args_zero_k_shots(self, tmp_path):
-        """Test validation fails with zero k-shots."""
-        # Create a test trainset file
-        trainset = tmp_path / "train.jsonl"
-        trainset.write_text("test")
-        
-        parser = create_parser()
-        args = parser.parse_args([
-            "compile",
-            "--component", "selection",
-            "--trainset", str(trainset),
-            "--student-model", "gpt-3.5-turbo",
-            "--teacher-model", "gpt-4o",
-            "--output-path", str(tmp_path / "output.json"),
-            "--k-shots", "0"
-        ])
-        
-        with pytest.raises(SystemExit):
-            validate_compile_args(args)
-    
-    def test_validate_compile_args_zero_max_trials(self, tmp_path):
-        """Test validation fails with zero max trials."""
-        # Create a test trainset file
-        trainset = tmp_path / "train.jsonl"
-        trainset.write_text("test")
-        
-        parser = create_parser()
-        args = parser.parse_args([
-            "compile",
-            "--component", "selection",
-            "--trainset", str(trainset),
-            "--student-model", "gpt-3.5-turbo",
-            "--teacher-model", "gpt-4o",
-            "--output-path", str(tmp_path / "output.json"),
-            "--max-trials", "0"
         ])
         
         with pytest.raises(SystemExit):
@@ -257,9 +231,9 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
-            "--seed", "42",
-            "--max-trials", "40"
+            "--seed", "42"
         ])
         
         # Mock the validation and compilation to succeed
@@ -275,11 +249,9 @@ class TestCommandHandling:
             train_path=Path("/tmp/train.jsonl"),
             student_model="gpt-3.5-turbo",
             teacher_model="gpt-4o",
+            config_path=Path("/tmp/config.yaml"),
             output_path=Path("/tmp/output.json"),
             seed=42,
-            optimizer="bootstrap-fewshot",  # Default value
-            k_shots=None,  # Not specified
-            max_trials=40,
             verbose=True  # Default verbose
         )
     
@@ -294,6 +266,7 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--quiet"
         ])
@@ -305,10 +278,17 @@ class TestCommandHandling:
         # Should not raise an exception
         handle_compile_command(args)
         
-        # Verify that compile_component was called with verbose=False
-        mock_compile.assert_called_once()
-        call_kwargs = mock_compile.call_args[1]
-        assert call_kwargs['verbose'] is False
+        # Verify that compile_component was called with correct arguments
+        mock_compile.assert_called_once_with(
+            component="selection",
+            train_path=Path("/tmp/train.jsonl"),
+            student_model="gpt-3.5-turbo",
+            teacher_model="gpt-4o",
+            config_path=Path("/tmp/config.yaml"),
+            output_path=Path("/tmp/output.json"),
+            seed=42,  # Default value
+            verbose=False  # Quiet flag disables verbose
+        )
     
     @patch('aclarai_claimify.cli.compile_component')
     @patch('aclarai_claimify.cli.validate_compile_args')
@@ -343,12 +323,13 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
-        # Mock the validation to succeed but compilation to fail
+        # Mock the validation to succeed but compilation to fail with data validation error
         mock_validate.return_value = None
-        mock_compile.side_effect = DataValidationError("Test validation error")
+        mock_compile.side_effect = DataValidationError("Test data validation error")
         
         with pytest.raises(SystemExit):
             handle_compile_command(args)
@@ -366,12 +347,13 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
-        # Mock the validation to succeed but compilation to fail
+        # Mock the validation to succeed but compilation to fail with model config error
         mock_validate.return_value = None
-        mock_compile.side_effect = ModelConfigError("Test config error")
+        mock_compile.side_effect = ModelConfigError("Test model config error")
         
         with pytest.raises(SystemExit):
             handle_compile_command(args)
@@ -389,12 +371,13 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
-        # Mock the validation to succeed but compilation to fail
+        # Mock the validation to succeed but compilation to fail with DSPy version error
         mock_validate.return_value = None
-        mock_compile.side_effect = DSPyVersionError("Test version error")
+        mock_compile.side_effect = DSPyVersionError("Test DSPy version error")
         
         with pytest.raises(SystemExit):
             handle_compile_command(args)
@@ -412,6 +395,7 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -433,6 +417,7 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -457,6 +442,7 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
+            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         

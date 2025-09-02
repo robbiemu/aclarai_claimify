@@ -1,0 +1,7 @@
+# Example configuration for BootstrapFewShot optimizer
+# Save this as optimization_configs/bootstrap_fewshot.yaml
+
+optimizer_name: "bootstrap-fewshot"
+params:
+  max_bootstrapped_demos: 8
+  max_labeled_demos: 40

@@ -11,12 +11,14 @@ from typing import Optional, List
 
 try:
     import dspy
-except ImportError:
+    import yaml
+except ImportError as e:
+    missing = "yaml" if "yaml" in str(e) else "dspy"
     raise ImportError(
-        "DSPy optimization features require additional dependencies. Install with:\
+        f"DSPy optimization features require additional dependencies. Install with:\
 "
-        "pip install 'aclarai-claimify[optimization]'"
-    )
+        f"pip install 'aclarai-claimify[optimization]'"
+    ) from e
 
 try:
     import litellm
@@ -63,6 +65,38 @@ class OptimizationError(Exception):
     pass
 
 
+def _load_optimizer_config(config_path: Path) -> dict:
+    """Load optimizer configuration from YAML file.
+    
+    Args:
+        config_path: Path to the YAML configuration file
+        
+    Returns:
+        Dictionary containing optimizer configuration
+        
+    Raises:
+        ValueError: If the configuration is invalid
+        FileNotFoundError: If the config file doesn't exist
+    """
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+    except Exception as e:
+        raise ValueError(f"Failed to parse YAML config file: {e}") from e
+    
+    # Validate required fields
+    if "optimizer_name" not in config:
+        raise ValueError("Config file must contain 'optimizer_name' field")
+    
+    if "params" not in config:
+        raise ValueError("Config file must contain 'params' field")
+        
+    return config
+
+
 def _check_openai_api_key() -> None:
     """Check that OPENAI_API_KEY is available in environment.
 
@@ -101,17 +135,11 @@ def _initialize_models(
         )
 
     try:
-        # Try new DSPy API first
-        try:
-            student_lm = dspy.LM(f"openai/{student_model}")
-            teacher_lm = dspy.LM(f"openai/{teacher_model}")
-            if verbose:
-                print("   ✅ Using dspy.LM API")
-        except (AttributeError, TypeError) as e:
-            # No fallback to older API - raise error directly
-            raise DSPyVersionError(
-                f"DSPy version incompatible. New dspy.LM API failed: {e}"
-            ) from e
+        # Use the new DSPy API (dspy-ai>=2.4.0)
+        student_lm = dspy.LM(f"openai/{student_model}")
+        teacher_lm = dspy.LM(f"openai/{teacher_model}")
+        if verbose:
+            print("   ✅ Using dspy.LM API")
 
         # Configure DSPy with the student model as default
         dspy.settings.configure(lm=student_lm)
@@ -133,8 +161,7 @@ def _run_optimizer(
     valset: List[dspy.Example],
     metric: callable,
     teacher_lm,
-    k_shots: Optional[int],
-    max_trials: int,
+    optimizer_config: dict,
     verbose: bool = True,
 ) -> dspy.Module:
     """Run DSPy optimization on the program.
@@ -145,8 +172,7 @@ def _run_optimizer(
         valset: Validation examples
         metric: Evaluation metric function
         teacher_lm: Teacher language model
-        k_shots: Number of few-shot examples (None for default)
-        max_trials: Maximum optimization trials
+        optimizer_config: Optimizer configuration from YAML file
         verbose: Whether to print progress
 
     Returns:
@@ -155,54 +181,43 @@ def _run_optimizer(
     Raises:
         OptimizationError: If optimization fails
     """
+    optimizer_name = optimizer_config["optimizer_name"]
+    params = optimizer_config["params"]
+    
     if verbose:
         print(
             f"🚀 Running optimization with {len(trainset)} train, {len(valset)} val examples"
         )
-        print(f"   Max trials: {max_trials}, K-shots: {k_shots or 'default'}")
+        print(f"   Optimizer: {optimizer_name}")
+        print(f"   Parameters: {params}")
 
     try:
-        # Try different DSPy optimizer APIs
-        optimizer = None
-
-        # Try new teleprompt API
+        # Map of supported optimizers
+        optimizer_classes = {
+            "bootstrap-fewshot": dspy.teleprompt.BootstrapFewShot,
+            # Add more optimizers here as needed
+        }
+        
+        if optimizer_name not in optimizer_classes:
+            raise OptimizationError(f"Unsupported optimizer: {optimizer_name}")
+            
+        optimizer_class = optimizer_classes[optimizer_name]
+        
+        # Add metric to params
+        optimizer_params = params.copy()
+        optimizer_params["metric"] = metric
+        
+        # Try to initialize optimizer with teacher model
         try:
-            from dspy.teleprompt import BootstrapFewShot
+            optimizer = optimizer_class(teacher=teacher_lm, **optimizer_params)
+            if verbose:
+                print(f"   ✅ Using {optimizer_name} with teacher model")
+        except TypeError:
+            # Teacher not supported, try without it
+            optimizer = optimizer_class(**optimizer_params)
+            if verbose:
+                print(f"   ✅ Using {optimizer_name} without teacher model")
 
-            optimizer_kwargs = {
-                "metric": metric,
-                "max_bootstrapped_demos": k_shots or 8,
-                "max_labeled_demos": max_trials,
-            }
-
-            # Add teacher if supported
-            try:
-                optimizer = BootstrapFewShot(teacher=teacher_lm, **optimizer_kwargs)
-                if verbose:
-                    print("   ✅ Using BootstrapFewShot with teacher model")
-            except TypeError:
-                # Teacher not supported in this version
-                optimizer = BootstrapFewShot(**optimizer_kwargs)
-                if verbose:
-                    print("   ✅ Using BootstrapFewShot without teacher model")
-
-        except ImportError:
-            # Try legacy API
-            try:
-                optimizer = dspy.BootstrapFewShot(
-                    metric=metric,
-                    max_bootstrapped_demos=k_shots or 8,
-                    max_labeled_demos=max_trials,
-                )
-                if verbose:
-                    print("   ✅ Using legacy dspy.BootstrapFewShot")
-            except AttributeError:
-                raise OptimizationError("No compatible DSPy optimizer found")
-
-        if optimizer is None:
-            raise OptimizationError("Failed to initialize optimizer")
-
-        # Run compilation
         if verbose:
             print("   ⏳ Compiling program (this may take a while)...")
 
@@ -372,11 +387,9 @@ def compile_component(
     train_path: Path,
     student_model: str,
     teacher_model: str,
+    config_path: Path,
     output_path: Path,
     seed: Optional[int] = 42,
-    optimizer: str = "bootstrap-fewshot",
-    k_shots: Optional[int] = None,
-    max_trials: int = 40,
     verbose: bool = True,
 ) -> None:
     """Compile a Claimify component using DSPy optimization.
@@ -388,11 +401,9 @@ def compile_component(
         train_path: Path to training JSONL dataset
         student_model: Model name for final program execution
         teacher_model: Model name for optimization guidance
+        config_path: Path to optimizer configuration YAML file
         output_path: Where to save the compiled artifact
         seed: Random seed for reproducibility
-        optimizer: Optimizer name (currently only "bootstrap-fewshot")
-        k_shots: Number of few-shot examples (None for default)
-        max_trials: Maximum optimization trials
         verbose: Whether to print progress messages
 
     Raises:
@@ -401,6 +412,7 @@ def compile_component(
     if verbose:
         print(f"🎯 Compiling {component} component")
         print(f"   Dataset: {train_path}")
+        print(f"   Config: {config_path}")
         print(f"   Output: {output_path}")
 
     try:
@@ -432,27 +444,36 @@ def compile_component(
         if verbose:
             print(f"   📊 Train: {len(trainset)}, Val: {len(valset)}")
 
-        # 4. Initialize models
+        # 4. Load optimizer configuration
+        if verbose:
+            print("⚙️  Loading optimizer configuration...")
+        optimizer_config = _load_optimizer_config(config_path)
+        optimizer_name = optimizer_config["optimizer_name"]
+        
+        if verbose:
+            print(f"   ✅ Using optimizer: {optimizer_name}")
+
+        # 5. Initialize models
         student_lm, teacher_lm = _initialize_models(
             student_model, teacher_model, verbose
         )
 
-        # 5. Build program
+        # 6. Build program
         if verbose:
             print("🏗️  Building program...")
         program = build_program(signature, style="cot")
 
-        # 6. Run optimization
+        # 7. Run optimization
         compiled_program = _run_optimizer(
-            program, trainset, valset, metric, teacher_lm, k_shots, max_trials, verbose
+            program, trainset, valset, metric, teacher_lm, optimizer_config, verbose
         )
 
-        # 7. Evaluate on validation set
+        # 8. Evaluate on validation set
         validation_metrics = _evaluate_program(
             compiled_program, valset, metric, verbose
         )
 
-        # 8. Extract artifacts
+        # 9. Extract artifacts
         if verbose:
             print("🔍 Extracting program artifacts...")
         few_shots = _extract_few_shots(compiled_program, component)
@@ -461,15 +482,15 @@ def compile_component(
         if verbose:
             print(f"   📝 Extracted {len(few_shots)} few-shot examples")
 
-        # 9. Create and save artifact
+        # 10. Create and save artifact
         if verbose:
             print("💾 Creating artifact...")
 
+        # Create optimizer params for artifact
         optimizer_params = OptimizerParams(
-            optimizer_name=optimizer,
-            max_bootstrapped_demos=k_shots,
-            max_trials=max_trials,
+            optimizer_name=optimizer_name,
             seed=seed,
+            other_params=optimizer_config.get("params", {})
         )
 
         artifact = create_artifact_dict(

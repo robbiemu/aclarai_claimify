@@ -1,0 +1,7 @@
+# Example configuration for a MIPRO-like optimizer (hypothetical)
+# Save this as optimization_configs/mipro.yaml
+
+optimizer_name: "mipro"
+params:
+  num_trials: 15
+  max_rounds: 2

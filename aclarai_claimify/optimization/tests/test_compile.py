@@ -1,6 +1,8 @@
 """Unit tests for the core compilation pipeline."""
 
 import sys
+import os
+import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock, PropertyMock
 import pytest
@@ -135,14 +137,21 @@ class TestOptimizer:
         mock_teacher_lm = MagicMock()
         
         # Test successful optimization
+        optimizer_config = {
+            "optimizer_name": "bootstrap-fewshot",
+            "params": {
+                "max_bootstrapped_demos": 5,
+                "max_labeled_demos": 20
+            }
+        }
+        
         result = _run_optimizer(
             mock_program,
             mock_trainset,
             mock_valset,
             mock_metric,
             mock_teacher_lm,
-            k_shots=5,
-            max_trials=20
+            optimizer_config
         )
         
         # Verify the calls
@@ -170,14 +179,21 @@ class TestOptimizer:
         mock_teacher_lm = MagicMock()
         
         # Test successful optimization
+        optimizer_config = {
+            "optimizer_name": "bootstrap-fewshot",
+            "params": {
+                "max_bootstrapped_demos": 5,
+                "max_labeled_demos": 20
+            }
+        }
+        
         result = _run_optimizer(
             mock_program,
             mock_trainset,
             mock_valset,
             mock_metric,
             mock_teacher_lm,
-            k_shots=5,
-            max_trials=20
+            optimizer_config
         )
         
         # Verify the calls
@@ -185,39 +201,35 @@ class TestOptimizer:
         assert result is not None
     
     @patch('dspy.teleprompt.BootstrapFewShot')
-    def test_run_optimizer_legacy_api(self, mock_bootstrap):
-        """Test optimizer execution with legacy DSPy API."""
-        # Mock import error for new API
+    def test_run_optimizer_import_error(self, mock_bootstrap):
+        """Test optimizer execution with import error."""
+        # Mock import error for optimizer
         mock_bootstrap.side_effect = ImportError("No module named teleprompt")
         
-        with patch('dspy.BootstrapFewShot') as mock_legacy_bootstrap:
-            # Mock the legacy optimizer
-            mock_optimizer_instance = MagicMock()
-            mock_legacy_bootstrap.return_value = mock_optimizer_instance
-            mock_optimizer_instance.compile.return_value = MagicMock()
-            
-            # Create mock program and examples
-            mock_program = MagicMock()
-            mock_trainset = [MagicMock(), MagicMock()]
-            mock_valset = [MagicMock()]
-            mock_metric = MagicMock()
-            mock_teacher_lm = MagicMock()
-            
-            # Test successful optimization
-            result = _run_optimizer(
+        # Create mock program and examples
+        mock_program = MagicMock()
+        mock_trainset = [MagicMock(), MagicMock()]
+        mock_valset = [MagicMock()]
+        mock_metric = MagicMock()
+        mock_teacher_lm = MagicMock()
+        
+        optimizer_config = {
+            "optimizer_name": "bootstrap-fewshot",
+            "params": {
+                "max_bootstrapped_demos": 5,
+                "max_labeled_demos": 20
+            }
+        }
+        
+        with pytest.raises(OptimizationError):
+            _run_optimizer(
                 mock_program,
                 mock_trainset,
                 mock_valset,
                 mock_metric,
                 mock_teacher_lm,
-                k_shots=5,
-                max_trials=20
+                optimizer_config
             )
-            
-            # Verify the calls
-            mock_legacy_bootstrap.assert_called_once()
-            mock_optimizer_instance.compile.assert_called_once()
-            assert result == mock_optimizer_instance.compile.return_value
     
     @patch('dspy.teleprompt.BootstrapFewShot')
     def test_run_optimizer_api_error(self, mock_bootstrap):
@@ -234,6 +246,14 @@ class TestOptimizer:
         mock_metric = MagicMock()
         mock_teacher_lm = MagicMock()
         
+        optimizer_config = {
+            "optimizer_name": "bootstrap-fewshot",
+            "params": {
+                "max_bootstrapped_demos": 5,
+                "max_labeled_demos": 20
+            }
+        }
+        
         with pytest.raises(OptimizationError):
             _run_optimizer(
                 mock_program,
@@ -241,8 +261,7 @@ class TestOptimizer:
                 mock_valset,
                 mock_metric,
                 mock_teacher_lm,
-                k_shots=5,
-                max_trials=20
+                optimizer_config
             )
     
     @patch('dspy.teleprompt.BootstrapFewShot')
@@ -260,6 +279,14 @@ class TestOptimizer:
         mock_metric = MagicMock()
         mock_teacher_lm = MagicMock()
         
+        optimizer_config = {
+            "optimizer_name": "bootstrap-fewshot",
+            "params": {
+                "max_bootstrapped_demos": 5,
+                "max_labeled_demos": 20
+            }
+        }
+        
         with pytest.raises(OptimizationError):
             _run_optimizer(
                 mock_program,
@@ -267,8 +294,7 @@ class TestOptimizer:
                 mock_valset,
                 mock_metric,
                 mock_teacher_lm,
-                k_shots=5,
-                max_trials=20
+                optimizer_config
             )
 
 
@@ -489,12 +515,22 @@ class TestCompileComponent:
     @patch('aclarai_claimify.optimization.compile._extract_system_prompt')
     @patch('aclarai_claimify.optimization.compile.create_artifact_dict')
     @patch('aclarai_claimify.optimization.compile.save_artifact')
-    def test_compile_component_success(self, mock_save, mock_create, mock_extract_prompt, 
+    @patch('tempfile.NamedTemporaryFile')
+    def test_compile_component_success(self, mock_temp_file, mock_save, mock_create, mock_extract_prompt, 
                                      mock_extract_shots, mock_evaluate, mock_optimize,
                                      mock_build, mock_init_models, mock_split, mock_validate_examples,
                                      mock_map_examples, mock_validate_records, mock_load_dataset,
                                      mock_get_component):
         """Test successful compilation of a component."""
+        # Mock the temporary file
+        mock_temp_config = MagicMock()
+        mock_temp_config.name = "/tmp/test_config.yaml"
+        mock_temp_file.return_value.__enter__.return_value = mock_temp_config
+        
+        # Write a temporary config file
+        with open("/tmp/test_config.yaml", "w") as f:
+            f.write("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8\n  max_labeled_demos: 40")
+        
         # Mock all dependencies
         mock_signature = MagicMock()
         mock_signature.input_fields = {"context_text": "str", "target_sentence": "str"}
@@ -532,6 +568,7 @@ class TestCompileComponent:
             train_path=Path("/tmp/train.jsonl"),
             student_model="gpt-3.5-turbo",
             teacher_model="gpt-4o",
+            config_path=Path("/tmp/test_config.yaml"),
             output_path=Path("/tmp/output.json")
         )
         
@@ -550,6 +587,12 @@ class TestCompileComponent:
         mock_extract_prompt.assert_called_once()
         mock_create.assert_called_once()
         mock_save.assert_called_once_with({"test": "artifact"}, Path("/tmp/output.json"))
+        
+        # Clean up
+        try:
+            os.remove("/tmp/test_config.yaml")
+        except:
+            pass
     
     @patch('aclarai_claimify.optimization.compile.get_component_info')
     def test_compile_component_data_validation_error(self, mock_get_component):
@@ -575,5 +618,6 @@ class TestCompileComponent:
                     train_path=Path("/tmp/train.jsonl"),
                     student_model="gpt-3.5-turbo",
                     teacher_model="gpt-4o",
+                    config_path=Path("/tmp/test_config.yaml"),
                     output_path=Path("/tmp/output.json")
                 )
