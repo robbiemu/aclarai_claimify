@@ -233,6 +233,76 @@ class ClaimifyResult(BaseModel):
         return []
 
 
+class GenerateDatasetSemanticEmbedderConfig(BaseModel):
+    """Configuration for the semantic embedder."""
+
+    type: str = Field(
+        default="sentence_transformer",
+        description="Specifies which plugin to use from aclarai_claimify/embeddings/",
+    )
+    model: str = Field(
+        default="all-MiniLM-L6-v2",
+        description="The name of the embedding model to use.",
+    )
+
+
+class GenerateDatasetSemanticContextConfig(BaseModel):
+    """Parameters for semantic context generation."""
+
+    min_k: int = Field(
+        default=3,
+        ge=1,
+        description="Minimum number of context sentences to retrieve.",
+    )
+    max_k: int = Field(
+        default=20,
+        ge=1,
+        description="Maximum number of context sentences to retrieve.",
+    )
+    similarity_threshold: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity score for a sentence to be included in the context.",
+    )
+
+
+class GenerateDatasetSemanticConfig(BaseModel):
+    """Configuration for the 'semantic' method."""
+
+    embedder: GenerateDatasetSemanticEmbedderConfig = Field(
+        default_factory=GenerateDatasetSemanticEmbedderConfig,
+        description="Embedding model configuration.",
+    )
+    context_params: GenerateDatasetSemanticContextConfig = Field(
+        default_factory=GenerateDatasetSemanticContextConfig,
+        description="Parameters for controlling the semantic context generation.",
+    )
+
+
+class GenerateDatasetStaticConfig(BaseModel):
+    """Configuration for the 'static' method."""
+
+    k_window_size: int = Field(
+        default=3,
+        ge=0,
+        description="The number of sentences to include before and after the target sentence.",
+    )
+
+
+class GenerateDatasetConfig(BaseModel):
+    """Configuration for the generate-dataset tool."""
+
+    method: str = Field(
+        default="semantic",
+        description='The context generation method. Can be "semantic" or "static".',
+    )
+    semantic: GenerateDatasetSemanticConfig = Field(
+        default_factory=GenerateDatasetSemanticConfig
+    )
+    static: GenerateDatasetStaticConfig = Field(default_factory=GenerateDatasetStaticConfig)
+
+
 class ClaimifyConfig(BaseModel):
     """Configuration for the Claimify pipeline."""
 
@@ -246,6 +316,12 @@ class ClaimifyConfig(BaseModel):
         default=1,
         ge=0,
         description="Following sentences in context window"
+    )
+
+    # NEW: Configuration for the generate-dataset tool
+    generate_dataset: GenerateDatasetConfig = Field(
+        default_factory=GenerateDatasetConfig,
+        description="Settings for the 'generate-dataset' tool.",
     )
     
     # Model configuration

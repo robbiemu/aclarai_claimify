@@ -351,6 +351,26 @@ def generate_decomposition_example(
         return None
 
 
+import importlib
+import numpy as np
+import faiss
+
+def _load_embedder(embedder_config):
+    """Dynamically load the embedder plugin."""
+    embedder_type = embedder_config.type
+    try:
+        module_path = f"aclarai_claimify.embeddings.{embedder_type}"
+        module = importlib.import_module(module_path)
+
+        # Convention: class name is CamelCase version of module name (e.g., sentence_transformer -> SentenceTransformerEmbedder)
+        class_name = "".join(word.capitalize() for word in embedder_type.split("_")) + "Embedder"
+        embedder_class = getattr(module, class_name)
+
+        return embedder_class(model_name=embedder_config.model)
+    except (ImportError, AttributeError) as e:
+        raise GenerationError(f"Failed to load embedder '{embedder_type}': {e}")
+
+
 def generate_dataset(
     input_file: Path,
     output_file: Path,
@@ -358,7 +378,6 @@ def generate_dataset(
     teacher_model: str,
     claimify_config: ClaimifyConfig,
     model_params: Optional[Dict[str, Any]] = None,
-    k_window_size: Optional[int] = None,
 ) -> None:
     """Generate a gold standard dataset from raw text inputs.
 
@@ -369,8 +388,6 @@ def generate_dataset(
         teacher_model: Teacher model name
         claimify_config: The main Claimify configuration object.
         model_params: Additional model parameters to pass to LiteLLM
-        k_window_size: Number of sentences before/after to include as context.
-                       If None, uses `context_window_p` from config.
 
     Raises:
         GenerationError: If generation fails
@@ -379,10 +396,7 @@ def generate_dataset(
     if not input_file.exists():
         raise FileNotFoundError(f"Input file not found: {input_file}")
 
-    # Determine window size
-    if k_window_size is None:
-        k_window_size = claimify_config.context_window_p
-        print(f"Using context window size (k) from config: {k_window_size}")
+    settings = claimify_config.generate_dataset
 
     # Select the appropriate generator function
     generators = {
@@ -390,46 +404,98 @@ def generate_dataset(
         "disambiguation": generate_disambiguation_example,
         "decomposition": generate_decomposition_example,
     }
-
     if component not in generators:
         raise GenerationError(
             f"Unknown component '{component}'. Must be one of: {list(generators.keys())}"
         )
-
     generator = generators[component]
 
     # Read input lines
     with open(input_file, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
-
     if not lines:
         raise GenerationError("Input file is empty")
 
     # Use the specified teacher model, or fall back to the config's default
-    final_teacher_model = teacher_model or claimify_config.get_model_for_stage(
-        component
-    )
-    print(
-        f"Generating {len(lines)} examples for {component} component using {final_teacher_model}..."
-    )
+    final_teacher_model = teacher_model or claimify_config.get_model_for_stage(component)
+    print(f"Generating {len(lines)} examples for {component} component using {final_teacher_model}...")
     print("⚠️  WARNING: This may incur costs depending on your API provider and usage!")
 
-    # Process each line
+    # --- Context Generation Strategy ---
+    contexts = []
+    if component != "decomposition":
+        if settings.method == "static":
+            print("Using STATIC K-window context generation method.")
+            k = settings.static.k_window_size
+            contexts = [create_context_window(lines, i, k) for i in range(len(lines))]
+
+        elif settings.method == "semantic":
+            print("Using SEMANTIC context generation method.")
+            embedder_config = settings.semantic.embedder
+            context_params = settings.semantic.context_params
+
+            # 1. Initialize embedder
+            print(f"Initializing embedder: {embedder_config.type} (model: {embedder_config.model})")
+            embedder = _load_embedder(embedder_config)
+
+            # 2. Embed all sentences
+            print("Embedding all sentences...")
+            embeddings = embedder.embed(lines)
+
+            # Normalize embeddings for cosine similarity
+            if np.any(np.linalg.norm(embeddings, axis=1) - 1.0 > 1e-6):
+                 faiss.normalize_L2(embeddings)
+
+            # 3. Build FAISS index
+            print("Building FAISS index...")
+            index = faiss.IndexFlatIP(embeddings.shape[1]) # Using Inner Product for cosine similarity
+            index.add(embeddings)
+
+            # 4. Perform similarity search for each sentence
+            print("Performing similarity search...")
+            for i in tqdm.tqdm(range(len(lines)), desc="Finding similar contexts"):
+                query_vector = embeddings[i:i+1]
+
+                # Search for more than max_k to have options for filtering
+                search_k = min(len(lines), context_params.max_k + 1)
+                distances, indices = index.search(query_vector, search_k)
+
+                # Filter results
+                context_sentences = []
+                for j in range(len(indices[0])):
+                    neighbor_idx = indices[0][j]
+                    similarity = distances[0][j]
+
+                    # Skip the sentence itself
+                    if neighbor_idx == i:
+                        continue
+
+                    if similarity >= context_params.similarity_threshold:
+                        context_sentences.append(lines[neighbor_idx])
+
+                # Respect min_k and max_k
+                if len(context_sentences) < context_params.min_k:
+                    # If not enough sentences meet threshold, relax and take top k
+                    # (excluding the query sentence itself)
+                    all_neighbors = [idx for idx in indices[0] if idx != i]
+                    context_sentences = [lines[idx] for idx in all_neighbors[:context_params.min_k]]
+
+                final_context = "\n".join(context_sentences[:context_params.max_k])
+                contexts.append(final_context)
+        else:
+            raise ValueError(f"Unknown generation method in config: '{settings.method}'")
+
+    # --- Process each line and generate examples ---
     successful_examples = 0
     failed_examples = 0
-
     with open(output_file, "w", encoding="utf-8") as f_out:
         for i, line in enumerate(tqdm.tqdm(lines, desc="Generating examples")):
             try:
                 example = None
                 if component == "decomposition":
-                    # For decomposition, the line is the disambiguated text
                     example = generator(line, final_teacher_model, model_params)
                 else:
-                    # For selection and disambiguation, create a sliding context window
-                    context = create_context_window(
-                        all_sentences=lines, target_index=i, k=k_window_size
-                    )
+                    context = contexts[i]
                     example = generator(context, line, final_teacher_model, model_params)
 
                 if example is not None:
@@ -442,9 +508,7 @@ def generate_dataset(
                 failed_examples += 1
                 print(f"Error processing line {i + 1}: {e}", file=sys.stderr)
                 if hasattr(e, "__traceback__"):
-                    traceback.print_exception(
-                        type(e), e, e.__traceback__, file=sys.stderr
-                    )
+                    traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
 
     print("\n✅ Generation complete!")
     print(f"   Successfully generated: {successful_examples} examples")
