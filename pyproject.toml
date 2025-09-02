@@ -7,7 +7,6 @@ name = "aclarai-claimify"
 version = "0.1.0"
 requires-python = ">=3.9"
 dependencies = [
-    "llama-index-core",
     "pydantic>=2.0.0",
     "pyyaml",
     "dspy-ai",
@@ -25,9 +24,18 @@ optimization = [
     "sentence-transformers",
     "faiss-cpu",
 ]
+agent = [
+    "langgraph",
+    "langgraph-checkpoint-sqlite",
+    "langsmith",
+    "litellm",
+    "beautifulsoup4",
+    "pytest",
+]
 
 [project.scripts]
 aclarai-claimify = "aclarai_claimify.cli:main"
+aclarai-claimify-scout = "aclarai_claimify.scout.main:run"
 
 [tool.setuptools]
 packages = [
@@ -37,8 +45,10 @@ packages = [
     "aclarai_claimify.optimization",
     "aclarai_claimify.optimization.tests",
     "aclarai_claimify.prompts",
+    "aclarai_claimify.scout",
     "aclarai_claimify.settings",
     "aclarai_claimify.utils",
 ]
 [tool.setuptools.package-data]
 "aclarai_claimify.settings" = ["*.yaml"]
+"aclarai_claimify" = ["../docs/*.md"]

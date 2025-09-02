@@ -303,6 +303,66 @@ class GenerateDatasetConfig(BaseModel):
     static: GenerateDatasetStaticConfig = Field(default_factory=GenerateDatasetStaticConfig)
 
 
+class ScoutAgentMissionPlanNodeConfig(BaseModel):
+    """Configuration for a single node in the Scout Agent's mission plan."""
+
+    name: str = Field(..., description="The name of the node.")
+    model: str = Field(..., description="The LLM model to use for this node.")
+    temperature: float = Field(
+        default=0.7, ge=0.0, le=2.0, description="Sampling temperature for the model."
+    )
+    max_tokens: int = Field(
+        default=4096, ge=1, description="Maximum tokens for the model's output."
+    )
+
+
+class ScoutAgentMissionPlanConfig(BaseModel):
+    """Defines the mission plan for the Data Scout Agent."""
+
+    goal: str = Field(..., description="The high-level goal for the data scouting mission.")
+    max_iterations: int = Field(
+        default=10, ge=1, description="Maximum number of search-extract-audit cycles."
+    )
+    nodes: List[ScoutAgentMissionPlanNodeConfig] = Field(
+        default_factory=list, description="Configuration for each node in the agent graph."
+    )
+
+    def get_node_config(self, name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]:
+        """Retrieve the configuration for a specific node by name."""
+        for node in self.nodes:
+            if node.name == name:
+                return node
+        return None
+
+
+class ScoutAgentWriterConfig(BaseModel):
+    """Configuration for the agent's output writers."""
+
+    tier1_path: str = Field(
+        default="./scout_tier1_raw",
+        description="Path to store raw, cleaned text dumps.",
+    )
+    tier2_path: str = Field(
+        default="./scout_tier2_curated",
+        description="Path to store curated, fitness-checked subsets.",
+    )
+    audit_trail_path: str = Field(
+        default="./PEDIGREE.md", description="Path to the audit trail file."
+    )
+
+
+class ScoutAgentConfig(BaseModel):
+    """Main configuration for the Data Scout Agent."""
+
+    mission_plan: ScoutAgentMissionPlanConfig
+    writer: ScoutAgentWriterConfig = Field(default_factory=ScoutAgentWriterConfig)
+    # Configuration for the persistent checkpointer
+    checkpointer_path: str = Field(
+        default=".checkpointer.sqlite",
+        description="Path to the SQLite database for the checkpointer.",
+    )
+
+
 class ClaimifyConfig(BaseModel):
     """Configuration for the Claimify pipeline."""
 
@@ -323,10 +383,13 @@ class ClaimifyConfig(BaseModel):
         default_factory=GenerateDatasetConfig,
         description="Settings for the 'generate-dataset' tool.",
     )
-    
+
+    # NEW: Configuration for the Data Scout Agent
+    scout_agent: Optional[ScoutAgentConfig] = None
+
     # Model configuration
     selection_model: Optional[str] = Field(
-        None, 
+        None,
         description="Model to use for selection stage"
     )
     disambiguation_model: Optional[str] = Field(
