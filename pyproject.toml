@@ -1,6 +1,11 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "aclarai-claimify"
 version = "0.1.0"
+requires-python = ">=3.9"
 dependencies = [
     "llama-index-core",
     "llama-index-llms-openai",
@@ -13,6 +18,15 @@ dependencies = [
 dev = [
     "pytest",
 ]
+optimization = [
+    "dspy-ai>=2.4.0",
+    "litellm>=1.0.0",
+    "rich>=13.0.0",
+    "tqdm>=4.65.0",
+]
+
+[project.scripts]
+aclarai-claimify = "aclarai_claimify.cli:main"
 
 [tool.setuptools]
 packages = ["aclarai_claimify"]
