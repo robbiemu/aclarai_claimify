@@ -155,6 +155,12 @@ Examples:
     compile_parser.add_argument(
         "--overwrite", action="store_true", help="Overwrite output file if it exists"
     )
+    compile_parser.add_argument(
+        "--k-window-size",
+        type=int,
+        default=None,
+        help="Context window size (k) used for the trainset. Stores it as metadata in the artifact.",
+    )
 
     # Schema subcommand
     schema_parser = subparsers.add_parser(
@@ -197,6 +203,12 @@ Examples:
         "--teacher-model",
         required=True,
         help="Powerful teacher model to use for generation (e.g., gpt-4o, claude-3-opus)",
+    )
+    generate_parser.add_argument(
+        "--k-window-size",
+        type=int,
+        default=2,
+        help="Number of sentences to include before and after the target sentence as context (default: 2)",
     )
 
     # Optional arguments
@@ -369,6 +381,7 @@ def handle_compile_command(args: argparse.Namespace) -> None:
             seed=args.seed,
             verbose=verbose,
             model_params=model_params,
+            k_window_size=args.k_window_size,
         )
 
         if verbose:
@@ -468,6 +481,7 @@ def handle_generate_command(args: argparse.Namespace) -> None:
             component=args.component,
             teacher_model=args.teacher_model,
             model_params=model_params,
+            k_window_size=args.k_window_size,
         )
 
         print("\n🎉 Success! Your gold standard dataset is ready.")
