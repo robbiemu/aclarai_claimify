@@ -13,7 +13,10 @@ from aclarai_claimify.cli import (
     create_parser,
     validate_compile_args,
     handle_compile_command,
-    handle_schema_command
+    handle_schema_command,
+    validate_generate_args,
+    handle_generate_command,
+    GenerationError
 )
 
 
@@ -97,6 +100,24 @@ class TestArgumentParsing:
         
         assert args.command == "schema"
         assert args.component == "selection"
+
+    def test_generate_parser_args(self):
+        """Test that generate-dataset subcommand works correctly."""
+        parser = create_parser()
+        
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        assert args.command == "generate-dataset"
+        assert args.input_file == Path("/tmp/input.txt")
+        assert args.output_file == Path("/tmp/output.jsonl")
+        assert args.component == "selection"
+        assert args.teacher_model == "gpt-4o"
 
 
 class TestArgumentValidation:
@@ -215,6 +236,56 @@ class TestArgumentValidation:
         
         with pytest.raises(SystemExit):
             validate_compile_args(args)
+
+    def test_validate_generate_args_missing_input(self, tmp_path):
+        """Test validation fails when input file doesn't exist."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", str(tmp_path / "nonexistent.txt"),
+            "--output-file", str(tmp_path / "output.jsonl"),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
+    
+    def test_validate_generate_args_input_is_directory(self, tmp_path):
+        """Test validation fails when input file is a directory."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", str(tmp_path),  # This is a directory
+            "--output-file", str(tmp_path / "output.jsonl"),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
+    
+    def test_validate_generate_args_output_exists(self, tmp_path):
+        """Test validation fails when output file exists."""
+        # Create a test input file
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test")
+        
+        # Create an existing output file
+        output_file = tmp_path / "output.jsonl"
+        output_file.write_text("existing")
+        
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", str(input_file),
+            "--output-file", str(output_file),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
 
 
 class TestCommandHandling:
@@ -452,3 +523,94 @@ class TestCommandHandling:
         
         with pytest.raises(SystemExit):
             handle_compile_command(args)
+
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_success(self, mock_validate, mock_generate):
+        """Test successful generate-dataset command execution."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation and generation to succeed
+        mock_validate.return_value = None
+        mock_generate.return_value = None
+        
+        # Should not raise an exception
+        handle_generate_command(args)
+        
+        # Verify that generate_dataset was called with correct arguments
+        mock_generate.assert_called_once_with(
+            input_file=Path("/tmp/input.txt"),
+            output_file=Path("/tmp/output.jsonl"),
+            component="selection",
+            teacher_model="gpt-4o",
+        )
+    
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_generation_error(self, mock_validate, mock_generate):
+        """Test generate-dataset command handling of GenerationError."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation to succeed but generation to fail
+        mock_validate.return_value = None
+        mock_generate.side_effect = GenerationError("Test generation error")
+        
+        with pytest.raises(SystemExit):
+            handle_generate_command(args)
+    
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_keyboard_interrupt(self, mock_validate, mock_generate):
+        """Test generate-dataset command handling of KeyboardInterrupt."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation to succeed but generation to be interrupted
+        mock_validate.return_value = None
+        mock_generate.side_effect = KeyboardInterrupt()
+        
+        with pytest.raises(SystemExit) as exc_info:
+            handle_generate_command(args)
+        
+        # Check that exit code is 130 (SIGINT)
+        assert exc_info.value.code == 130
+    
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_unexpected_error(self, mock_validate, mock_generate):
+        """Test generate-dataset command handling of unexpected errors."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-file", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation to succeed but generation to fail unexpectedly
+        mock_validate.return_value = None
+        mock_generate.side_effect = Exception("Unexpected error")
+        
+        with pytest.raises(SystemExit):
+            handle_generate_command(args)

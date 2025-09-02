@@ -142,6 +142,52 @@ custom_decomposition_comp = DecompositionComponent(
 # state = custom_decomposition_comp(state)
 ```
 
+## Generate Gold Standard Datasets
+
+To make it easier to create training datasets for optimization, Claimify provides a `generate-dataset` CLI command that uses a powerful teacher model to automatically generate structured training examples from raw text.
+
+### Step 1: Prepare Raw Text Input
+
+Create a simple text file with one sentence per line:
+
+**`my_raw_sentences.txt`**
+```
+The system failed due to a memory error, and this failure was a surprise to the team.
+Project Apollo's primary mission was to land humans on the Moon.
+The database migration began at midnight and completed in 4.5 hours.
+```
+
+### Step 2: Generate the Dataset
+
+Use the built-in CLI to generate a structured dataset for a specific component:
+
+```bash
+aclarai-claimify generate-dataset \
+    --input-file ./my_raw_sentences.txt \
+    --output-file ./my_decomposition_dataset.jsonl \
+    --component decomposition \
+    --teacher-model gpt-4o
+```
+
+⚠️ **Warning**: This operation may incur costs depending on your API provider and usage!
+
+### Step 3: Review and Refine
+
+The generated dataset is a good starting point, but you should review it for quality and make any necessary corrections before using it for compilation.
+
+### Step 4: Compile with Your Dataset
+
+Now you can use your generated dataset with the standard compilation process:
+
+```bash
+aclarai-claimify compile \
+    --component decomposition \
+    --trainset ./my_decomposition_dataset.jsonl \
+    --student-model gpt-3.5-turbo \
+    --teacher-model gpt-4o \
+    --output-path ./custom_prompts/my_compiled_decomposition.json
+```
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a pull request or open an issue.

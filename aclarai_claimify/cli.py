@@ -18,6 +18,7 @@ try:
         OptimizationError,
     )
     from .optimization.data import print_schema_help
+    from .optimization.generate import generate_dataset, GenerationError
 except ImportError as e:
 
     def _missing_optimization_deps(*args, **kwargs):
@@ -30,6 +31,7 @@ except ImportError as e:
 
     compile_component = _missing_optimization_deps
     print_schema_help = _missing_optimization_deps
+    generate_dataset = _missing_optimization_deps
 
     class DataValidationError(Exception):
         pass
@@ -41,6 +43,9 @@ except ImportError as e:
         pass
 
     class OptimizationError(Exception):
+        pass
+
+    class GenerationError(Exception):
         pass
 
 
@@ -158,6 +163,36 @@ Examples:
         help="Component to show schema for",
     )
 
+    # Generate dataset subcommand
+    generate_parser = subparsers.add_parser(
+        "generate-dataset",
+        help="Generate a gold standard dataset using a teacher model",
+        description="Create training datasets by using a powerful teacher model to generate structured outputs from raw text inputs",
+    )
+    generate_parser.add_argument(
+        "--input-file",
+        type=Path,
+        required=True,
+        help="Path to input text file (one sentence per line)",
+    )
+    generate_parser.add_argument(
+        "--output-file",
+        type=Path,
+        required=True,
+        help="Path to output JSONL file",
+    )
+    generate_parser.add_argument(
+        "--component",
+        choices=["selection", "disambiguation", "decomposition"],
+        required=True,
+        help="Component to generate data for",
+    )
+    generate_parser.add_argument(
+        "--teacher-model",
+        required=True,
+        help="Powerful teacher model to use for generation (e.g., gpt-4o, claude-3-opus)",
+    )
+
     return parser
 
 
@@ -226,6 +261,55 @@ def validate_compile_args(args: argparse.Namespace) -> None:
     # Validate numeric arguments
     if args.seed is not None and args.seed < 0:
         print(f"❌ Error: Seed must be non-negative, got: {args.seed}", file=sys.stderr)
+        sys.exit(1)
+
+
+def validate_generate_args(args: argparse.Namespace) -> None:
+    """Validate arguments for the generate-dataset command.
+
+    Args:
+        args: Parsed command line arguments
+
+    Raises:
+        SystemExit: If validation fails
+    """
+    # Check input file exists
+    if not args.input_file.exists():
+        print(
+            f"❌ Error: Input file not found: {args.input_file}",
+            file=sys.stderr,
+        )
+        print(
+            f"💡 Hint: Make sure the file path is correct and the file exists",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Check input file is a file (not directory)
+    if not args.input_file.is_file():
+        print(
+            f"❌ Error: Input path is not a file: {args.input_file}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Check output directory exists or can be created
+    output_dir = args.output_file.parent
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(
+            f"❌ Error: Cannot create output directory {output_dir}: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Check if output file exists
+    if args.output_file.exists():
+        print(
+            f"❌ Error: Output file already exists: {args.output_file}", file=sys.stderr
+        )
+        print(f"💡 Hint: Remove the existing file or specify a different output path", file=sys.stderr)
         sys.exit(1)
 
 
@@ -320,6 +404,57 @@ def handle_schema_command(args: argparse.Namespace) -> None:
     print_schema_help(args.component)
 
 
+def handle_generate_command(args: argparse.Namespace) -> None:
+    """Handle the generate-dataset subcommand.
+
+    Args:
+        args: Parsed command line arguments
+    """
+    # Validate arguments
+    validate_generate_args(args)
+
+    print("🚀 Aclarai Claimify - Gold Standard Dataset Generation")
+    print("=" * 55)
+
+    try:
+        # Run generation
+        generate_dataset(
+            input_file=args.input_file,
+            output_file=args.output_file,
+            component=args.component,
+            teacher_model=args.teacher_model,
+        )
+
+        print("\n🎉 Success! Your gold standard dataset is ready.")
+        print(f"📁 Dataset saved: {args.output_file}")
+        print("\n💡 Next steps:")
+        print(f"   1. Review the generated dataset for quality")
+        print(f"   2. Use it to compile your component:")
+        print(f"      aclarai-claimify compile \\")
+        print(f"          --component {args.component} \\")
+        print(f"          --trainset {args.output_file} \\")
+        print(f"          --student-model <your-student-model> \\")
+        print(f"          --teacher-model {args.teacher_model} \\")
+        print(f"          --config <optimizer-config.yaml> \\")
+        print(f"          --output-path <compiled-artifact.json>")
+
+    except GenerationError as e:
+        print(f"\n❌ Dataset Generation Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    except KeyboardInterrupt:
+        print(f"\n⏹️  Generation interrupted by user", file=sys.stderr)
+        sys.exit(130)  # Standard exit code for SIGINT
+
+    except Exception as e:
+        print(f"\n💥 Unexpected error: {e}", file=sys.stderr)
+        print(f"\n💡 This might be a bug. Please report it with:", file=sys.stderr)
+        print(f"   - Your command line arguments", file=sys.stderr)
+        print(f"   - The error message above", file=sys.stderr)
+        print(f"   - Your Python and DSPy versions", file=sys.stderr)
+        sys.exit(1)
+
+
 def main() -> None:
     """Main entry point for the CLI."""
     parser = create_parser()
@@ -336,6 +471,8 @@ def main() -> None:
         handle_compile_command(args)
     elif args.command == "schema":
         handle_schema_command(args)
+    elif args.command == "generate-dataset":
+        handle_generate_command(args)
     else:
         parser.print_help()
         sys.exit(0)
