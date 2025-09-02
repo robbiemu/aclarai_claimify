@@ -441,13 +441,17 @@ def handle_compile_command(args: argparse.Namespace) -> None:
                 print(f"\n❌ Invalid JSON in --model-params: {e}", file=sys.stderr)
                 sys.exit(1)
 
+        if verbose:
+            print(
+                f"   Optimizer Config: {optim_config_path if optim_config_path else 'Using default'}"
+            )
+
         # Run compilation
         compile_component(
             component=args.component,
             train_path=args.trainset,
             student_model=args.student_model,
             teacher_model=args.teacher_model,
-            config_path=optim_config_path,  # Still needed for dspy naming
             output_path=args.output_path,
             seed=args.seed,
             verbose=verbose,

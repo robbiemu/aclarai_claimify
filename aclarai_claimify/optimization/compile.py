@@ -345,7 +345,6 @@ def compile_component(
     verbose: bool = True,
     model_params: Optional[Dict[str, Any]] = None,
     k_window_size: Optional[int] = None,
-    config_path: Optional[Path] = None,  # Keep for logging
 ) -> None:
     """Compile a Claimify component using DSPy optimization.
 
@@ -363,14 +362,11 @@ def compile_component(
         verbose: Whether to print detailed output
         model_params: Additional model parameters to pass to LiteLLM
         k_window_size: Context window size used for the trainset
-        config_path: Path to optimizer config for logging purposes
     """
 
     if verbose:
         print(f"🎯 Compiling {component} component")
         print(f"   Dataset: {train_path}")
-        if config_path:
-            print(f"   Config: {config_path}")
         print(f"   Output: {output_path}")
 
     try:
