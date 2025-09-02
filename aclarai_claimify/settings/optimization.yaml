@@ -1,0 +1,7 @@
+# Default configuration for the optimizer
+# This can be overridden by a user-provided file.
+
+optimizer_name: "bootstrap-fewshot"
+params:
+  max_bootstrapped_demos: 8
+  max_labeled_demos: 40

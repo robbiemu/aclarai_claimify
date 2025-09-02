@@ -331,3 +331,16 @@ class ClaimifyConfig(BaseModel):
             "decomposition": self.decomposition_model,
         }
         return stage_models.get(stage) or self.default_model
+
+
+class OptimizationConfig(BaseModel):
+    """Configuration for the DSPy optimizer."""
+
+    optimizer_name: str = Field(
+        ...,
+        description="Name of the DSPy optimizer to use (e.g., 'bootstrap-fewshot')",
+    )
+    params: dict = Field(
+        default_factory=dict,
+        description="Parameters to pass to the optimizer",
+    )

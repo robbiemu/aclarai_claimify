@@ -3,11 +3,14 @@
 This module provides the CLI for compiling Claimify components using DSPy,
 allowing users to optimize their own datasets and models.
 """
-
 import argparse
+import importlib.resources as resources
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
+
+from .config import load_claimify_config, load_optimization_config
 
 try:
     from .optimization.compile import (
@@ -19,12 +22,10 @@ try:
     )
     from .optimization.data import print_schema_help
     from .optimization.generate import generate_dataset, GenerationError
-except ImportError as e:
+except ImportError:
 
     def _missing_optimization_deps(*args, **kwargs):
-        print(
-            "❌ Error: DSPy optimization features are not available.", file=sys.stderr
-        )
+        print("❌ Error: DSPy optimization features are not available.", file=sys.stderr)
         print("💡 Install optimization dependencies with:", file=sys.stderr)
         print("   pip install 'aclarai-claimify[optimization]'", file=sys.stderr)
         sys.exit(1)
@@ -87,6 +88,19 @@ Examples:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # Init subcommand
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Create a local `settings` directory with default configurations",
+        description="This command copies the default configuration files to your current "
+        "directory, allowing you to easily customize them.",
+    )
+    init_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing `settings` directory if it exists",
+    )
+
     # Compile subcommand
     compile_parser = subparsers.add_parser(
         "compile",
@@ -120,8 +134,10 @@ Examples:
     compile_parser.add_argument(
         "--config",
         type=Path,
-        required=True,
-        help="Path to optimizer configuration YAML file",
+        required=False,
+        help="Path to a custom optimizer configuration YAML file. "
+        "If not provided, it will look for 'settings/optimization.yaml' "
+        "in the current directory.",
     )
     compile_parser.add_argument(
         "--output-path",
@@ -251,8 +267,8 @@ def validate_compile_args(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # Check config file exists
-    if not args.config.exists():
+    # Check config file exists if provided
+    if args.config and not args.config.exists():
         print(f"❌ Error: Config file not found: {args.config}", file=sys.stderr)
         print(
             "💡 Hint: Make sure the file path is correct and the file exists",
@@ -260,8 +276,8 @@ def validate_compile_args(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # Check config is a file (not directory)
-    if not args.config.is_file():
+    # Check config is a file (not directory) if provided
+    if args.config and not args.config.is_file():
         print(f"❌ Error: Config path is not a file: {args.config}", file=sys.stderr)
         sys.exit(1)
 
@@ -342,6 +358,46 @@ def validate_generate_args(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def handle_init_command(args: argparse.Namespace) -> None:
+    """Handle the init subcommand.
+
+    Args:
+        args: Parsed command line arguments
+    """
+    dest_dir = Path.cwd() / "settings"
+    if dest_dir.exists() and not args.overwrite:
+        print(f"❌ Error: Directory '{dest_dir}' already exists.", file=sys.stderr)
+        print("💡 Use --overwrite to replace it.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        # Remove existing directory if overwrite is true
+        if dest_dir.exists() and args.overwrite:
+            print(f"Removing existing directory: {dest_dir}")
+            shutil.rmtree(dest_dir)
+
+        # Create the settings directory
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy files from package resources
+        package_settings_path = "aclarai_claimify.settings"
+        files_to_copy = ["config.yaml", "optimization.yaml"]
+
+        print(f"Creating local settings directory at: {dest_dir}")
+        for filename in files_to_copy:
+            with resources.path(package_settings_path, filename) as src_path:
+                dest_path = dest_dir / filename
+                shutil.copy(src_path, dest_path)
+                print(f"  - Created {dest_path}")
+
+        print("\n✅ Initialization complete.")
+        print("You can now edit the files in the 'settings' directory.")
+
+    except Exception as e:
+        print(f"\n💥 Unexpected error during init: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def handle_compile_command(args: argparse.Namespace) -> None:
     """Handle the compile subcommand.
 
@@ -359,6 +415,21 @@ def handle_compile_command(args: argparse.Namespace) -> None:
         print("=" * 50)
 
     try:
+        # Determine config path
+        if args.config:
+            optim_config_path = args.config
+        else:
+            local_optim_config = Path.cwd() / "settings" / "optimization.yaml"
+            optim_config_path = (
+                local_optim_config if local_optim_config.exists() else None
+            )
+
+        # Load configurations
+        claimify_config = load_claimify_config(
+            override_path=str(Path.cwd() / "settings" / "config.yaml")
+        )
+        optim_config = load_optimization_config(override_path=str(optim_config_path))
+
         # Parse model_params if provided
         model_params = {}
         if hasattr(args, "model_params") and args.model_params:
@@ -376,12 +447,14 @@ def handle_compile_command(args: argparse.Namespace) -> None:
             train_path=args.trainset,
             student_model=args.student_model,
             teacher_model=args.teacher_model,
-            config_path=args.config,
+            config_path=optim_config_path,  # Still needed for dspy naming
             output_path=args.output_path,
             seed=args.seed,
             verbose=verbose,
             model_params=model_params,
             k_window_size=args.k_window_size,
+            claimify_config=claimify_config,
+            optimizer_config=optim_config,
         )
 
         if verbose:
@@ -456,6 +529,11 @@ def handle_generate_command(args: argparse.Namespace) -> None:
     # Validate arguments
     validate_generate_args(args)
 
+    # Load configuration
+    claimify_config = load_claimify_config(
+        override_path=str(Path.cwd() / "settings" / "config.yaml")
+    )
+
     # Parse model_params if provided
     model_params = {}
     if hasattr(args, "model_params") and args.model_params:
@@ -482,6 +560,7 @@ def handle_generate_command(args: argparse.Namespace) -> None:
             teacher_model=args.teacher_model,
             model_params=model_params,
             k_window_size=args.k_window_size,
+            claimify_config=claimify_config,
         )
 
         print("\n🎉 Success! Your gold standard dataset is ready.")
@@ -526,7 +605,9 @@ def main() -> None:
     args = parser.parse_args()
 
     # Route to appropriate handler
-    if args.command == "compile":
+    if args.command == "init":
+        handle_init_command(args)
+    elif args.command == "compile":
         handle_compile_command(args)
     elif args.command == "schema":
         handle_schema_command(args)
