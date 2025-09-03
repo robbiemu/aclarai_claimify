@@ -1,16 +1,6 @@
 # tools.py
 """
 Production-ready tool implementations for the Data Scout Agent.
-
-Provides:
-- url_to_markdown (core)
-- documentation_crawler (optional; uses libcrawler if installed)
-- write_file (core) -> returns filepath + sha256
-- append_to_pedigree (core) -> writes audit entry and returns path
-
-Also:
-- get_available_tools()
-- get_tools_for_role(role: str)
 """
 
 from __future__ import annotations
@@ -64,7 +54,6 @@ def _extract_main_text_and_title(html: str, css_selector: Optional[str] = None) 
     title = title_tag.get_text(strip=True) if title_tag else ""
     for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]):
         tag.decompose()
-    # ... (rest of the function is perfect as is)
     content_text = soup.get_text(" ", strip=True)
     content_text = re.sub(r"\s+\n", "\n", content_text)
     content_text = re.sub(r"[ \t]{2,}", " ", content_text).strip()
@@ -72,7 +61,6 @@ def _extract_main_text_and_title(html: str, css_selector: Optional[str] = None) 
 
 def _to_markdown_simple(title: str, text: str, url: Optional[str] = None, add_front_matter: bool = True) -> str:
     """Produce a simple Markdown representation."""
-    # ... (This function is perfect as is)
     parts = []
     if add_front_matter:
         fm = {"source_url": url or "", "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
@@ -120,16 +108,11 @@ def url_to_markdown(url: str, css_selector: Optional[str] = None, timeout_s: int
     except Exception as e:
         return {"url": url, "markdown": "", "title": "", "text_snippet": "", "status": "error", "error": f"{type(e).__name__}: {str(e)}"}
 
-# -------------------------
-# Smart documentation_crawler (optional)
-# -------------------------
-
 class CrawlInput(pydantic.BaseModel):
     """Input schema for documentation_crawler tool."""
     base_url: str = pydantic.Field(description="The base URL of the documentation site (e.g., https://example.com).")
     starting_point: str = pydantic.Field(description="The starting path (e.g., /docs/ or /en/latest/).")
     max_depth: int = pydantic.Field(default=3, description="Max crawl depth to avoid runaway crawls.")
-    ## REVISED ## - Changed from regex patterns to simple string paths to match libcrawler's implementation.
     allowed_paths: Optional[List[str]] = pydantic.Field(default=None, description="Optional list of URL paths to include during crawling.")
     ignore_paths: Optional[List[str]] = pydantic.Field(default=None, description="Optional list of URL paths to skip during crawling.")
     timeout_s: int = pydantic.Field(default=30, description="Timeout for network ops during heuristic scanning.")
@@ -156,7 +139,6 @@ if _HAVE_LIBCRAWLER:
         except Exception as e:
             return {"base_url": base_url, "start_url": start_url, "pages": {}, "status": "error", "error": f"Pre-scan failed: {type(e).__name__}: {str(e)}"}
 
-        ## REVISED ## - Logic now infers simple paths, not regex, to align with libcrawler.
         inferred_allowed = allowed_paths or []
         if not inferred_allowed:
             common_prefixes = {}
@@ -181,17 +163,13 @@ if _HAVE_LIBCRAWLER:
         output_file = os.path.join(temp_dir, "crawled_docs.md")
 
         try:
-            # Assuming crawl_and_convert is an async function as per modern libraries
-            # If it's not, the asyncio.run() call would be removed.
-            # For this implementation, we will assume it is async.
-            async def run_crawl():
-                await crawl_and_convert(
+            asyncio.run(
+                crawl_and_convert(
                     start_url=start_url, base_url=base_url_clean, output_filename=output_file,
                     allowed_paths=inferred_allowed, ignore_paths=inferred_ignore,
                     similarity_threshold=similarity_threshold
                 )
-            asyncio.run(run_crawl())
-
+            )
             if os.path.exists(output_file):
                 with open(output_file, "r", encoding="utf-8") as f:
                     md_all = f.read()
@@ -211,10 +189,6 @@ if _HAVE_LIBCRAWLER:
             shutil.rmtree(temp_dir, ignore_errors=True)
 else:
     documentation_crawler = None
-
-# -------------------------
-# write_file and append_to_pedigree tools
-# -------------------------
 
 class WriteFileInput(pydantic.BaseModel):
     """Input schema for write_file tool."""
@@ -236,12 +210,10 @@ def write_file(filepath: str, content: str) -> Dict[str, Any]:
 
 class AppendPedigreeInput(pydantic.BaseModel):
     """Input schema for the append_to_pedigree tool."""
-    ## REVISED ## - Removed pedigree_path. The agent state, not the LLM, should manage this.
     entry_markdown: str = pydantic.Field(description="Fully formatted markdown string to be appended to the pedigree file.")
     run_id: Optional[str] = pydantic.Field(default=None, description="Optional run/thread id for grouping entries.")
 
 @tool("append_to_pedigree", args_schema=AppendPedigreeInput)
-## REVISED ## - Added pedigree_path as a required argument from the agent, not the LLM.
 def append_to_pedigree(pedigree_path: str, entry_markdown: str, run_id: Optional[str] = None) -> Dict[str, Any]:
     """Appends a markdown entry to the pedigree file in a standardized block with a timestamp."""
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

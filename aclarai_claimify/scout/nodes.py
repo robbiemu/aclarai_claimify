@@ -1,208 +1,133 @@
-import os
-import json
-import litellm
+# nodes.py
+"""
+Agent nodes for the Data Scout graph.
+"""
+import pydantic
+from typing import List, Dict
+
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
 from .state import DataScoutState
-from aclarai_claimify.config import load_claimify_config
+from .tools import get_tools_for_role
+from ..config import ClaimifyConfig, load_claimify_config
 
-# --- Prompts ---
+# --- LLM and Agent Creation ---
 
-DECONSTRUCT_PROMPT = """
-Deconstruct the following high-level goal into a structured JSON object.
-The JSON object should contain:
-1.  "entities": A list of key entities or topics to research.
-2.  "scope": A description of what is in-scope and out-of-scope.
-3.  "success_criteria": A list of questions that need to be answered to fulfill the goal.
+def create_llm(config: ClaimifyConfig, role: str) -> ChatOpenAI:
+    """Creates a configured ChatOpenAI instance for a given agent role."""
+    # This is a simplified config lookup. A real implementation would have more
+    # detailed, role-specific settings in the config.yaml.
+    default_model = config.default_model or "gpt-4o-mini"
+    temperature = config.temperature or 0.1
+    max_tokens = config.max_tokens or 2000
 
-Goal: {goal}
+    return ChatOpenAI(model=default_model, temperature=temperature, max_tokens=max_tokens)
 
-Return only the JSON object.
-"""
+def create_agent_runnable(llm: ChatOpenAI, system_prompt: str, role: str):
+    """Factory to create a new agent node's runnable."""
+    tools = get_tools_for_role(role)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="messages"),
+    ])
+    if tools:
+        return prompt | llm.bind_tools(tools)
+    return prompt | llm
 
-PLAN_PROMPT = """
-Based on the deconstructed goal, create a web search plan.
-The plan should be a JSON object with a list of search queries.
-Each query should be targeted to find specific information related to the success criteria.
+# --- Pydantic Models for Structured Output ---
 
-Deconstructed Goal: {deconstructed_goal}
+class SupervisorDecision(pydantic.BaseModel):
+    """The supervisor's decision on the next agent to run."""
+    next_agent: str = pydantic.Field(
+        description="The name of the next agent to run. Must be one of 'research', 'archive', 'fitness', or 'end'."
+    )
 
-Return only the JSON object with a "queries" key.
-"""
+# --- Agent Node Implementations ---
 
-FITNESS_CHECK_PROMPT = """
-Evaluate the following text based on the deconstructed goal.
-Determine if the text is relevant and reliable for the data-gathering mission.
-Provide a JSON object with the following keys:
-1.  "is_fit": boolean, true if the text is relevant and reliable.
-2.  "reasoning": a brief explanation of your decision.
-3.  "score": a float from 0.0 to 1.0 indicating the quality of the text.
-
-Deconstructed Goal: {deconstructed_goal}
-Text to Evaluate:
----
-{text}
----
-
-Return only the JSON object.
-"""
-
-
-def get_node_config(node_name: str):
-    """Helper to get node configuration."""
+def supervisor_node(state: DataScoutState) -> Dict:
+    """The supervisor node, responsible for routing tasks using structured output."""
     config = load_claimify_config()
-    if config.scout_agent:
-        for node in config.scout_agent.mission_plan.nodes:
-            if node.name == node_name:
-                return node
-    return None
+    system_prompt = """You are the supervisor of a team of agents performing data scouting.
+Your role is to analyze the user's request, the conversation history, and the current state, then decide which agent should act next.
 
+The available agents and their roles are:
+- research: Finds information from the web using search tools. Call this agent when the user asks a question or requests information.
+- archive: Writes information to files and updates the audit trail. Call this agent when research is complete and the findings need to be saved.
+- fitness: Evaluates the quality and relevance of the research findings. Call this agent after the research agent has produced some findings.
+- end: If the user's request has been fully addressed and no more actions are needed, you can end the conversation.
 
-def deconstruct_goal_node(state: DataScoutState) -> DataScoutState:
-    print("---DECONSTRUCT GOAL---")
-    goal = state['mission_goal']
-    node_config = get_node_config("DeconstructGoalNode")
-    if not node_config:
-        raise ValueError("Config for DeconstructGoalNode not found.")
+Here is the current state:
+- Task Queue: {task_queue}
+- Research Findings: {research_findings}
 
-    prompt = DECONSTRUCT_PROMPT.format(goal=goal)
-    response = litellm.completion(
-        model=node_config.model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=node_config.temperature,
-        max_tokens=node_config.max_tokens,
+Based on the latest user message and the current state, decide which agent should act next.
+Your response MUST be a JSON object matching the required schema."""
+
+    llm = create_llm(config, "supervisor").with_structured_output(SupervisorDecision)
+
+    agent_prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="messages"),
+    ]).partial(
+        task_queue=str(state['task_queue']),
+        research_findings=str(state['research_findings'])
     )
 
-    try:
-        deconstructed_goal = json.loads(response.choices[0].message.content)
-        state['deconstructed_goal'] = deconstructed_goal
-    except (json.JSONDecodeError, KeyError):
-        print("Error: Failed to decode JSON from deconstruction response.")
-        state['deconstructed_goal'] = {"error": "Failed to parse LLM response."}
-
-    return state
+    agent = agent_prompt | llm
+    result = agent.invoke({"messages": state["messages"]})
+    return {"next_agent": result.next_agent.lower()}
 
 
-def plan_node(state: DataScoutState) -> DataScoutState:
-    print("---PLANNING---")
-    deconstructed_goal = state['deconstructed_goal']
-    node_config = get_node_config("PlanNode")
-    if not node_config:
-        raise ValueError("Config for PlanNode not found.")
-
-    prompt = PLAN_PROMPT.format(deconstructed_goal=json.dumps(deconstructed_goal, indent=2))
-    response = litellm.completion(
-        model=node_config.model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=node_config.temperature,
-        max_tokens=node_config.max_tokens,
-    )
-
-    try:
-        search_plan = json.loads(response.choices[0].message.content)
-        state['search_plan'] = search_plan
-        state['search_queries'] = search_plan.get("queries", [])
-    except (json.JSONDecodeError, KeyError):
-        print("Error: Failed to decode JSON from planning response.")
-        state['search_plan'] = {"error": "Failed to parse LLM response."}
-        state['search_queries'] = []
-
-    return state
-
-
-def web_search_node(state: DataScoutState) -> DataScoutState:
-    print("---WEB SEARCH---")
-    # This is a placeholder for a real web search tool.
-    # In a real implementation, this would use a library like `requests` and `BeautifulSoup`,
-    # or an API like Tavily or SearxNG.
-    queries = state.get("search_queries", [])
-    if not queries:
-        print("No search queries found. Skipping web search.")
-        state['search_results'] = []
-        state['extraction_results'] = []
-        return state
-
-    # For now, we'll just return a dummy result.
-    query = queries.pop(0) # Process one query per iteration
-    print(f"Executing dummy search for: {query}")
-    state['search_results'] = [{"url": f"http://example.com/search?q={query}", "content": "This is a placeholder content for the search query: " + query}]
-    state['extraction_results'] = ["This is the extracted text from the dummy search result."]
-    state['search_queries'] = queries # Update the list of remaining queries
-    return state
-
-
-def fitness_check_node(state: DataScoutState) -> DataScoutState:
-    print("---FITNESS CHECK---")
-    deconstructed_goal = state['deconstructed_goal']
-    extraction_results = state.get("extraction_results", [])
-    if not extraction_results:
-        print("No extraction results to check. Skipping fitness check.")
-        state['fitness_check_results'] = []
-        return state
-
-    node_config = get_node_config("FitnessCheckNode")
-    if not node_config:
-        raise ValueError("Config for FitnessCheckNode not found.")
-
-    # For now, we only check the first result.
-    text_to_evaluate = extraction_results[0]
-    prompt = FITNESS_CHECK_PROMPT.format(deconstructed_goal=json.dumps(deconstructed_goal, indent=2), text=text_to_evaluate)
-
-    response = litellm.completion(
-        model=node_config.model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=node_config.temperature,
-        max_tokens=node_config.max_tokens,
-    )
-
-    try:
-        fitness_result = json.loads(response.choices[0].message.content)
-        state['fitness_check_results'] = [fitness_result]
-    except (json.JSONDecodeError, KeyError):
-        print("Error: Failed to decode JSON from fitness check response.")
-        state['fitness_check_results'] = [{"error": "Failed to parse LLM response."}]
-
-    return state
-
-
-def archiving_node(state: DataScoutState) -> DataScoutState:
-    print("---ARCHIVING---")
-
+def research_node(state: DataScoutState) -> Dict:
+    """The research node, responsible for finding information."""
     config = load_claimify_config()
-    if not config.scout_agent:
-        print("Warning: Scout agent config not found. Skipping archiving.")
-        return state
+    system_prompt = """You are a professional researcher. Your goal is to find information to answer the user's request, which is in the message history.
+Review the conversation history. If the user has a specific question, use your tools to find the answer.
+If the user has a general topic, use your tools to find relevant documentation or articles.
+You can use `url_to_markdown` for single pages or `documentation_crawler` for entire documentation sites.
+Once you have gathered the information, another agent will handle saving it. Just return the results of your research."""
+    llm = create_llm(config, "research")
+    agent_runnable = create_agent_runnable(llm, system_prompt, "research")
+    result = agent_runnable.invoke(state)
+    return {"messages": [result]}
 
-    writer_config = config.scout_agent.writer
 
-    # Create directories if they don't exist
-    os.makedirs(writer_config.tier1_path, exist_ok=True)
-    os.makedirs(writer_config.tier2_path, exist_ok=True)
+def archive_node(state: DataScoutState) -> Dict:
+    """The archive node, responsible for saving data and updating the audit trail."""
+    config = load_claimify_config()
+    system_prompt = """You are a meticulous archivist. Your role is to save research findings and maintain a clean audit trail.
+You have two primary tools:
+1. `write_file`: To save content to a file. You should generate a suitable filepath, e.g., `output/research_results.md`.
+2. `append_to_pedigree`: To record how the data was obtained. The markdown for this entry is often provided by other agents.
 
-    # --- Tier 1: Raw Output ---
-    raw_content = "\n".join(state.get("extraction_results", []))
-    iteration = state.get("iteration", 0)
-    if raw_content:
-        tier1_filename = os.path.join(writer_config.tier1_path, f"raw_output_{iteration}.txt")
-        with open(tier1_filename, "w") as f:
-            f.write(raw_content)
-        print(f"Tier 1 data written to {tier1_filename}")
+When another agent provides you with content to save (`full_markdown` from the crawler or `markdown` from the url tool), you MUST:
+1. Call `write_file` to save the content.
+2. Call `append_to_pedigree` with the `pedigree_entry` that was provided along with the content."""
+    llm = create_llm(config, "archive")
+    agent_runnable = create_agent_runnable(llm, system_prompt, "archive")
+    result = agent_runnable.invoke({"messages": state["messages"]})
 
-    # --- Tier 2: Curated Output & Audit Trail ---
-    fitness_results = state.get("fitness_check_results", [])
-    if fitness_results and fitness_results[0].get("is_fit"):
-        # Write to Tier 2
-        tier2_filename = os.path.join(writer_config.tier2_path, f"curated_output_{iteration}.json")
-        with open(tier2_filename, "w") as f:
-            json.dump(state["extraction_results"], f, indent=2)
-        print(f"Tier 2 data written to {tier2_filename}")
+    if result.tool_calls:
+        for tool_call in result.tool_calls:
+            if tool_call["name"] == "append_to_pedigree":
+                tool_call["args"]["pedigree_path"] = state["pedigree_path"]
 
-        # Update Audit Trail
-        with open(writer_config.audit_trail_path, "a") as f:
-            f.write(f"## Iteration {iteration}\n\n")
-            f.write(f"**Source URL:** {state.get('search_results', [{}])[0].get('url', 'N/A')}\n")
-            f.write(f"**Fitness Check Result:** {fitness_results[0].get('reasoning', 'N/A')}\n")
-            f.write(f"**Score:** {fitness_results[0].get('score', 'N/A')}\n\n")
-        print(f"Audit trail updated in {writer_config.audit_trail_path}")
+    return {"messages": [result]}
 
-    state['iteration'] = iteration + 1
-    state['archived_data'].append({"message": "Data archived"})
-    return state
+
+def fitness_node(state: DataScoutState) -> Dict:
+    """The fitness node, responsible for evaluating content."""
+    config = load_claimify_config()
+    system_prompt = """You are a quality assurance agent. Your role is to evaluate the quality and relevance of research findings.
+Look at the last message in the conversation. If it is a research finding, evaluate it against the original user request.
+Respond with a critique, suggestions for improvement, or an approval. For example:
+- "The research on LangGraph is good, but it's missing details about the checkpointer."
+- "The article about web scraping is not relevant to the user's request about data processing."
+- "The findings are excellent and directly answer the user's question."
+"""
+    llm = create_llm(config, "fitness")
+    agent_runnable = create_agent_runnable(llm, system_prompt, "fitness")
+    result = agent_runnable.invoke(state)
+    return {"messages": [result]}

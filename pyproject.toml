@@ -24,14 +24,21 @@ optimization = [
     "sentence-transformers",
     "faiss-cpu",
 ]
-agent = [
+# Dependencies for the scout agent
+scout = [
     "langgraph",
     "langgraph-checkpoint-sqlite",
-    "langsmith",
-    "litellm",
+    "langchain-openai",
+    "attachments",
+    "pydantic",
     "beautifulsoup4",
-    "pytest",
+    "litellm",
+    "langsmith",
+    "requests",
+    "html5lib",
 ]
+# Optional dependency for the scout agent's crawler tool
+crawler = ["libcrawler"]
 
 [project.scripts]
 aclarai-claimify = "aclarai_claimify.cli:main"

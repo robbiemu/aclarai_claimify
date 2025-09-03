@@ -1,53 +1,64 @@
+# graph.py
+"""
+Builds the LangGraph application graph for the Data Scout agent.
+"""
 from langgraph.graph import StateGraph, END
-from .state import DataScoutState
-from .nodes import (
-    deconstruct_goal_node,
-    plan_node,
-    web_search_node,
-    fitness_check_node,
-    archiving_node,
-)
-
-def should_continue(state: DataScoutState) -> str:
-    """
-    Determines whether to continue the loop or end.
-    """
-    if state['iteration'] >= state['max_iterations']:
-        return "end"
-    return "continue"
-
+from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-def create_graph(checkpointer: SqliteSaver = None):
+from .state import DataScoutState
+from .nodes import supervisor_node, research_node, archive_node, fitness_node
+from .tools import get_tools_for_role
+
+def build_graph(checkpointer: SqliteSaver):
     """
-    Creates the Data Scout agent graph.
+    Builds and compiles the multi-agent graph with a supervisor.
+
+    Args:
+        checkpointer: A LangGraph checkpointer instance for persisting state.
+
+    Returns:
+        A compiled LangGraph app.
     """
     workflow = StateGraph(DataScoutState)
 
-    # Add the nodes
-    workflow.add_node("deconstruct_goal", deconstruct_goal_node)
-    workflow.add_node("plan", plan_node)
-    workflow.add_node("web_search", web_search_node)
-    workflow.add_node("fitness_check", fitness_check_node)
-    workflow.add_node("archive", archiving_node)
+    # --- Define Agent Nodes ---
+    workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("research", research_node)
+    workflow.add_node("archive", archive_node)
+    workflow.add_node("fitness", fitness_node)
 
-    # Set the entry point
-    workflow.set_entry_point("deconstruct_goal")
+    # --- Define Role-Specific Tool Nodes ---
+    research_tools = get_tools_for_role("research")
+    archive_tools = get_tools_for_role("archive")
 
-    # Add the edges
-    workflow.add_edge("deconstruct_goal", "plan")
-    workflow.add_edge("plan", "web_search")
-    workflow.add_edge("web_search", "fitness_check")
-    workflow.add_edge("fitness_check", "archive")
+    workflow.add_node("research_tools", ToolNode(research_tools))
+    workflow.add_node("archive_tools", ToolNode(archive_tools))
 
-    # Add the conditional edge
+    # --- Wire the Graph ---
+    workflow.set_entry_point("supervisor")
+
+    # The supervisor decides which agent to run next.
     workflow.add_conditional_edges(
-        "archive",
-        should_continue,
+        "supervisor",
+        lambda state: state["next_agent"],
         {
-            "continue": "web_search",
+            "research": "research",
+            "archive": "archive",
+            "fitness": "fitness",
             "end": END,
-        },
+        }
     )
 
+    # Agent nodes route to their tool nodes, which then route back to the supervisor.
+    workflow.add_edge("research", "research_tools")
+    workflow.add_edge("research_tools", "supervisor")
+
+    workflow.add_edge("archive", "archive_tools")
+    workflow.add_edge("archive_tools", "supervisor")
+
+    # The fitness agent has no tools, so it routes directly back to the supervisor.
+    workflow.add_edge("fitness", "supervisor")
+
+    # Compile the graph with the provided checkpointer
     return workflow.compile(checkpointer=checkpointer)
