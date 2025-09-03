@@ -65,6 +65,7 @@ def _parse_claimify_config_data(
             "log_transformations": logging_config.get("log_transformations"),
             "log_timing": logging_config.get("log_timing"),
             "generate_dataset": config_data.get("generate_dataset", {}),
+            "scout_agent": config_data.get("scout_agent"),
         }
 
         # Filter out None values so Pydantic uses defaults

@@ -30,35 +30,35 @@ def run():
 
     print(f"Mission Goal: {mission_plan.mission_plan.goal}")
 
-    checkpointer = SqliteSaver.from_conn_string(mission_plan.checkpointer_path)
-    graph = create_graph(checkpointer=checkpointer)
+    with SqliteSaver.from_conn_string(mission_plan.checkpointer_path) as checkpointer:
+        graph = create_graph(checkpointer=checkpointer)
 
-    thread = {"configurable": {"thread_id": "DATA_SCOUT_THREAD"}}
+        thread = {"configurable": {"thread_id": "DATA_SCOUT_THREAD"}}
 
-    # Check if there is a saved state for the thread
-    saved_state = checkpointer.get(thread)
-    if saved_state:
-        print("Resuming from saved state.")
-        initial_state = None
-    else:
-        print("Starting new mission.")
-        initial_state: DataScoutState = {
-            "mission_goal": mission_plan.mission_plan.goal,
-            "deconstructed_goal": {},
-            "search_plan": {},
-            "search_queries": [],
-            "search_results": [],
-            "extraction_results": [],
-            "fitness_check_results": [],
-            "archived_data": [],
-            "iteration": 0,
-            "max_iterations": mission_plan.mission_plan.max_iterations,
-        }
+        # Check if there is a saved state for the thread
+        saved_state = checkpointer.get(thread)
+        if saved_state:
+            print("Resuming from saved state.")
+            initial_state = None
+        else:
+            print("Starting new mission.")
+            initial_state: DataScoutState = {
+                "mission_goal": mission_plan.mission_plan.goal,
+                "deconstructed_goal": {},
+                "search_plan": {},
+                "search_queries": [],
+                "search_results": [],
+                "extraction_results": [],
+                "fitness_check_results": [],
+                "archived_data": [],
+                "iteration": 0,
+                "max_iterations": mission_plan.mission_plan.max_iterations,
+            }
 
-    for event in graph.stream(initial_state, thread):
-        for key, value in event.items():
-            print(f"Node: {key}")
-            print(f"State: {value}")
-            print("-" * 20)
+        for event in graph.stream(initial_state, thread):
+            for key, value in event.items():
+                print(f"Node: {key}")
+                print(f"State: {value}")
+                print("-" * 20)
 
     print("Data Scout Agent finished.")

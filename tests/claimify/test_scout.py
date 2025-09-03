@@ -31,9 +31,10 @@ def test_scout_agent_runnable_new_mission(mock_load_config, mock_create_graph, m
     mock_claimify_config.scout_agent = mock_scout_config
     mock_load_config.return_value = mock_claimify_config
 
-    # Mock the checkpointer to indicate no saved state
-    mock_checkpointer = mock_sqlite_saver.from_conn_string.return_value
+    # Mock the checkpointer context manager
+    mock_checkpointer = MagicMock()
     mock_checkpointer.get.return_value = None
+    mock_sqlite_saver.from_conn_string.return_value.__enter__.return_value = mock_checkpointer
 
     # Mock the graph compilation and execution
     mock_graph = mock_create_graph.return_value
@@ -69,9 +70,10 @@ def test_scout_agent_runnable_resume_mission(mock_load_config, mock_create_graph
     mock_claimify_config.scout_agent = mock_scout_config
     mock_load_config.return_value = mock_claimify_config
 
-    # Mock the checkpointer to indicate a saved state
-    mock_checkpointer = mock_sqlite_saver.from_conn_string.return_value
+    # Mock the checkpointer context manager
+    mock_checkpointer = MagicMock()
     mock_checkpointer.get.return_value = {"some": "state"}
+    mock_sqlite_saver.from_conn_string.return_value.__enter__.return_value = mock_checkpointer
 
     # Mock the graph compilation and execution
     mock_graph = mock_create_graph.return_value
