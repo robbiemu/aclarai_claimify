@@ -6,7 +6,7 @@ pipeline, including input/output types and configuration models.
 
 import logging
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -26,22 +26,10 @@ class SentenceChunk(BaseModel):
     which serve as input to the Selection stage.
     """
 
-    text: str = Field(
-        ..., 
-        description="The text content of the sentence"
-    )
-    source_id: str = Field(
-        ..., 
-        description="Original block/document ID"
-    )
-    chunk_id: str = Field(
-        ..., 
-        description="Unique identifier for this chunk"
-    )
-    sentence_index: int = Field(
-        ..., 
-        description="Position within the source"
-    )
+    text: str = Field(..., description="The text content of the sentence")
+    source_id: str = Field(..., description="Original block/document ID")
+    chunk_id: str = Field(..., description="Unique identifier for this chunk")
+    sentence_index: int = Field(..., description="Position within the source")
 
 
 class ClaimifyContext(BaseModel):
@@ -53,12 +41,10 @@ class ClaimifyContext(BaseModel):
 
     current_sentence: SentenceChunk
     preceding_sentences: List[SentenceChunk] = Field(
-        default_factory=list,
-        description="Preceding sentences (p sentences)"
+        default_factory=list, description="Preceding sentences (p sentences)"
     )
     following_sentences: List[SentenceChunk] = Field(
-        default_factory=list,
-        description="Following sentences (f sentences)"
+        default_factory=list, description="Following sentences (f sentences)"
     )
 
     @property
@@ -72,26 +58,19 @@ class SelectionResult(BaseModel):
 
     sentence_chunk: SentenceChunk
     is_selected: bool = Field(
-        ..., 
-        description="Whether the sentence was selected for processing"
+        ..., description="Whether the sentence was selected for processing"
     )
     confidence: Optional[float] = Field(
-        None, 
-        ge=0.0, 
-        le=1.0,
-        description="Confidence score for the selection decision"
+        None, ge=0.0, le=1.0, description="Confidence score for the selection decision"
     )
     reasoning: Optional[str] = Field(
-        None, 
-        description="Explanation of the selection decision"
+        None, description="Explanation of the selection decision"
     )
     processing_time: Optional[float] = Field(
-        None, 
-        description="Time taken to process the selection"
+        None, description="Time taken to process the selection"
     )
     rewritten_text: Optional[str] = Field(
-        None, 
-        description="Cleaned sentence text from LLM"
+        None, description="Cleaned sentence text from LLM"
     )
 
 
@@ -99,54 +78,38 @@ class DisambiguationResult(BaseModel):
     """Result of the Disambiguation stage."""
 
     original_sentence: SentenceChunk
-    disambiguated_text: str = Field(
-        ..., 
-        description="The disambiguated sentence text"
-    )
+    disambiguated_text: str = Field(..., description="The disambiguated sentence text")
     changes_made: List[str] = Field(
         default_factory=list,
-        description="Description of changes made during disambiguation"
+        description="Description of changes made during disambiguation",
     )
     confidence: Optional[float] = Field(
-        None, 
-        ge=0.0, 
-        le=1.0,
-        description="Confidence score for the disambiguation"
+        None, ge=0.0, le=1.0, description="Confidence score for the disambiguation"
     )
     processing_time: Optional[float] = Field(
-        None, 
-        description="Time taken to process the disambiguation"
+        None, description="Time taken to process the disambiguation"
     )
 
 
 class ClaimCandidate(BaseModel):
     """A candidate claim from the Decomposition stage."""
 
-    text: str = Field(
-        ..., 
-        description="The claim candidate text"
-    )
+    text: str = Field(..., description="The claim candidate text")
     is_atomic: bool = Field(
-        ..., 
-        description="Whether the candidate is atomic (single fact)"
+        ..., description="Whether the candidate is atomic (single fact)"
     )
     is_self_contained: bool = Field(
-        ..., 
-        description="Whether the candidate is self-contained (no ambiguous references)"
+        ...,
+        description="Whether the candidate is self-contained (no ambiguous references)",
     )
     is_verifiable: bool = Field(
-        ..., 
-        description="Whether the candidate is verifiable (factually checkable)"
+        ..., description="Whether the candidate is verifiable (factually checkable)"
     )
     confidence: Optional[float] = Field(
-        None, 
-        ge=0.0, 
-        le=1.0,
-        description="Confidence score for the candidate quality"
+        None, ge=0.0, le=1.0, description="Confidence score for the candidate quality"
     )
     reasoning: Optional[str] = Field(
-        None, 
-        description="Explanation of the quality evaluation"
+        None, description="Explanation of the quality evaluation"
     )
 
     @property
@@ -163,17 +126,13 @@ class ClaimCandidate(BaseModel):
 class DecompositionResult(BaseModel):
     """Result of the Decomposition stage."""
 
-    original_text: str = Field(
-        ..., 
-        description="The original text that was decomposed"
-    )
+    original_text: str = Field(..., description="The original text that was decomposed")
     claim_candidates: List[ClaimCandidate] = Field(
         default_factory=list,
-        description="List of claim candidates extracted from the sentence"
+        description="List of claim candidates extracted from the sentence",
     )
     processing_time: Optional[float] = Field(
-        None, 
-        description="Time taken to process the decomposition"
+        None, description="Time taken to process the decomposition"
     )
 
     @property
@@ -193,24 +152,19 @@ class ClaimifyResult(BaseModel):
     original_chunk: SentenceChunk
     context: ClaimifyContext
     selection_result: Optional[SelectionResult] = Field(
-        None, 
-        description="Result of the Selection stage"
+        None, description="Result of the Selection stage"
     )
     disambiguation_result: Optional[DisambiguationResult] = Field(
-        None, 
-        description="Result of the Disambiguation stage"
+        None, description="Result of the Disambiguation stage"
     )
     decomposition_result: Optional[DecompositionResult] = Field(
-        None, 
-        description="Result of the Decomposition stage"
+        None, description="Result of the Decomposition stage"
     )
     total_processing_time: Optional[float] = Field(
-        None, 
-        description="Total time taken to process the sentence"
+        None, description="Total time taken to process the sentence"
     )
     errors: List[str] = Field(
-        default_factory=list,
-        description="List of errors encountered during processing"
+        default_factory=list, description="List of errors encountered during processing"
     )
 
     @property
@@ -300,7 +254,9 @@ class GenerateDatasetConfig(BaseModel):
     semantic: GenerateDatasetSemanticConfig = Field(
         default_factory=GenerateDatasetSemanticConfig
     )
-    static: GenerateDatasetStaticConfig = Field(default_factory=GenerateDatasetStaticConfig)
+    static: GenerateDatasetStaticConfig = Field(
+        default_factory=GenerateDatasetStaticConfig
+    )
 
 
 class ScoutAgentMissionPlanNodeConfig(BaseModel):
@@ -316,15 +272,35 @@ class ScoutAgentMissionPlanNodeConfig(BaseModel):
     )
 
 
+class ScoutAgentResearchNodeConfig(BaseModel):
+    """Configuration for the Research Node's ReAct loop."""
+
+    max_iterations: int = Field(
+        default=7,
+        ge=1,
+        le=50,
+        description="Maximum number of iterations for the ReAct loop in the research node.",
+    )
+
+
+class ScoutAgentNodesConfig(BaseModel):
+    """Container for node-specific configurations."""
+
+    research: ScoutAgentResearchNodeConfig = Field(
+        default_factory=ScoutAgentResearchNodeConfig
+    )
+    # We can add configs for other nodes here later if needed
+
+
 class ScoutAgentMissionPlanConfig(BaseModel):
     """Defines the mission plan for the Data Scout Agent."""
 
-    goal: str = Field(..., description="The high-level goal for the data scouting mission.")
-    max_iterations: int = Field(
-        default=10, ge=1, description="Maximum number of search-extract-audit cycles."
+    goal: str = Field(
+        ..., description="The high-level goal for the data scouting mission."
     )
     nodes: List[ScoutAgentMissionPlanNodeConfig] = Field(
-        default_factory=list, description="Configuration for each node in the agent graph."
+        default_factory=list,
+        description="Configuration for each node in the agent graph.",
     )
 
     def get_node_config(self, name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]:
@@ -351,15 +327,91 @@ class ScoutAgentWriterConfig(BaseModel):
     )
 
 
+class AgentsReactConfig(BaseModel):
+    """Configuration for ReAct agents."""
+
+    max_iterations: int = Field(
+        default=7,
+        ge=1,
+        le=50,
+        description="Maximum number of iterations for ReAct loops in research agents",
+    )
+
+
+class SupervisorConfig(BaseModel):
+    """Configuration for the supervisor agent."""
+
+    max_consecutive_same_agent: int = Field(
+        default=1,
+        ge=0,
+        le=5,
+        description="Maximum consecutive calls to the same agent without failure",
+    )
+    max_total_steps: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum total steps before terminating to prevent infinite loops",
+    )
+
+    # Agent retry configurations
+    agent_max_retries: Dict[str, int] = Field(
+        default_factory=lambda: {
+            "research": 2,
+            "fitness": 1,
+            "archive": 1,
+            "synthetic": 1,
+        },
+        description="Maximum retries per agent type before switching",
+    )
+
+    # Fallback chain configuration
+    fallback_chain: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "fitness": "research",
+            "research": "synthetic",
+            "synthetic": "archive",
+            "archive": "end",
+        },
+        description="Default fallback agents when an agent fails repeatedly",
+    )
+
+
+class AgentsConfig(BaseModel):
+    """Configuration for all agents."""
+
+    react: AgentsReactConfig = Field(
+        default_factory=AgentsReactConfig, description="Configuration for ReAct agents"
+    )
+    supervisor: SupervisorConfig = Field(
+        default_factory=SupervisorConfig,
+        description="Configuration for the supervisor agent",
+    )
+
+
 class ScoutAgentConfig(BaseModel):
     """Main configuration for the Data Scout Agent."""
 
+    search_provider: Optional[str] = Field(
+        default="duckduckgo/search",
+        description="The default search provider to use (e.g., 'duckduckgo/search', 'brave/search')",
+    )
     mission_plan: ScoutAgentMissionPlanConfig
     writer: ScoutAgentWriterConfig = Field(default_factory=ScoutAgentWriterConfig)
     # Configuration for the persistent checkpointer
     checkpointer_path: str = Field(
         default=".checkpointer.sqlite",
         description="Path to the SQLite database for the checkpointer.",
+    )
+    nodes: ScoutAgentNodesConfig = Field(
+        default_factory=ScoutAgentNodesConfig,
+        description="Configuration specific to each agent node.",
+    )
+
+    # The initial prompt to send to the agent to start the mission
+    initial_prompt: Optional[str] = Field(
+        default=None,
+        description="The initial prompt to send to the agent to start the mission. If not provided, the TUI will ask for it interactively.",
     )
 
 
@@ -368,14 +420,16 @@ class ClaimifyConfig(BaseModel):
 
     # Context window parameters
     context_window_p: int = Field(
-        default=3,
-        ge=0,
-        description="Previous sentences in context window"
+        default=3, ge=0, description="Previous sentences in context window"
     )
     context_window_f: int = Field(
-        default=1,
-        ge=0,
-        description="Following sentences in context window"
+        default=1, ge=0, description="Following sentences in context window"
+    )
+
+    # NEW: Configuration for agents (ReAct, Supervisor, etc.)
+    agents: AgentsConfig = Field(
+        default_factory=AgentsConfig,
+        description="Configuration for all agents in the system",
     )
 
     # NEW: Configuration for the generate-dataset tool
@@ -389,77 +443,62 @@ class ClaimifyConfig(BaseModel):
 
     # Model configuration
     selection_model: Optional[str] = Field(
-        None,
-        description="Model to use for selection stage"
+        None, description="Model to use for selection stage"
     )
     disambiguation_model: Optional[str] = Field(
-        None, 
-        description="Model to use for disambiguation stage"
+        None, description="Model to use for disambiguation stage"
     )
     decomposition_model: Optional[str] = Field(
-        None, 
-        description="Model to use for decomposition stage"
+        None, description="Model to use for decomposition stage"
     )
     default_model: str = Field(
         default="gpt-3.5-turbo",
-        description="Default model to use when stage model is not specified"
+        description="Default model to use when stage model is not specified",
     )
-    
+
     # Processing parameters
     max_retries: int = Field(
-        default=3,
-        ge=0,
-        description="Maximum number of retries for LLM calls"
+        default=3, ge=0, description="Maximum number of retries for LLM calls"
     )
     timeout_seconds: int = Field(
-        default=30,
-        ge=1,
-        description="Timeout for LLM calls in seconds"
+        default=30, ge=1, description="Timeout for LLM calls in seconds"
     )
     temperature: float = Field(
-        default=0.1,
-        ge=0.0,
-        le=1.0,
-        description="Temperature for LLM calls"
+        default=0.1, ge=0.0, le=1.0, description="Temperature for LLM calls"
     )
     max_tokens: int = Field(
-        default=1000,
-        ge=1,
-        description="Maximum tokens for LLM calls"
+        default=1000, ge=1, description="Maximum tokens for LLM calls"
     )
-    
+
     # Quality thresholds
     selection_confidence_threshold: float = Field(
         default=0.5,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence threshold for selection"
+        description="Minimum confidence threshold for selection",
     )
     disambiguation_confidence_threshold: float = Field(
         default=0.5,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence threshold for disambiguation"
+        description="Minimum confidence threshold for disambiguation",
     )
     decomposition_confidence_threshold: float = Field(
         default=0.5,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence threshold for decomposition"
+        description="Minimum confidence threshold for decomposition",
     )
-    
+
     # Logging configuration
     log_decisions: bool = Field(
-        default=True,
-        description="Whether to log agent decisions"
+        default=True, description="Whether to log agent decisions"
     )
     log_transformations: bool = Field(
-        default=True,
-        description="Whether to log transformations"
+        default=True, description="Whether to log transformations"
     )
     log_timing: bool = Field(
-        default=True,
-        description="Whether to log processing times"
+        default=True, description="Whether to log processing times"
     )
 
     def get_model_for_stage(self, stage: str) -> str:

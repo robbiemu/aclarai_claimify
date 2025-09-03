@@ -7,7 +7,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .state import DataScoutState
-from .nodes import supervisor_node, research_node, archive_node, fitness_node
+from .nodes import supervisor_node, research_node, archive_node, fitness_node, synthetic_node
 from .tools import get_tools_for_role
 
 def build_graph(checkpointer: SqliteSaver):
@@ -27,6 +27,7 @@ def build_graph(checkpointer: SqliteSaver):
     workflow.add_node("research", research_node)
     workflow.add_node("archive", archive_node)
     workflow.add_node("fitness", fitness_node)
+    workflow.add_node("synthetic", synthetic_node)  # Add synthetic node
 
     # --- Define Role-Specific Tool Nodes ---
     research_tools = get_tools_for_role("research")
@@ -39,13 +40,41 @@ def build_graph(checkpointer: SqliteSaver):
     workflow.set_entry_point("supervisor")
 
     # The supervisor decides which agent to run next.
+    def supervisor_router(state):
+        """Route based on supervisor decision with debugging."""
+        next_agent = state.get("next_agent")
+        decision_history = state.get("decision_history", [])
+        print(f"🔀 Graph Router: next_agent = '{next_agent}' (type: {type(next_agent)})")
+        print(f"🔀 Graph Router: decision_history = {decision_history[-5:]}")
+        print(f"🔀 Graph Router: messages count = {len(state.get('messages', []))}")
+        
+        if next_agent == "end":
+            print(f"🏁 Graph Router: Routing to END")
+            return "end"
+        elif next_agent == "research":
+            print(f"🔍 Graph Router: Routing to research")
+            return "research"
+        elif next_agent == "archive":
+            print(f"📁 Graph Router: Routing to archive")
+            return "archive"
+        elif next_agent == "fitness":
+            print(f"💪 Graph Router: Routing to fitness")
+            return "fitness"
+        elif next_agent == "synthetic":
+            print(f"🎨 Graph Router: Routing to synthetic")
+            return "synthetic"
+        else:
+            print(f"⚠️  Graph Router: Unknown next_agent '{next_agent}', defaulting to END")
+            return "end"
+    
     workflow.add_conditional_edges(
         "supervisor",
-        lambda state: state["next_agent"],
+        supervisor_router,
         {
             "research": "research",
             "archive": "archive",
             "fitness": "fitness",
+            "synthetic": "synthetic",  # Add synthetic route
             "end": END,
         }
     )
@@ -59,6 +88,10 @@ def build_graph(checkpointer: SqliteSaver):
 
     # The fitness agent has no tools, so it routes directly back to the supervisor.
     workflow.add_edge("fitness", "supervisor")
+
+    # The synthetic agent routes directly to archive (bypassing fitness check)
+    # as per the "Unhappy Path" design: synthetic data is assumed to be correct by design
+    workflow.add_edge("synthetic", "archive")
 
     # Compile the graph with the provided checkpointer
     return workflow.compile(checkpointer=checkpointer)

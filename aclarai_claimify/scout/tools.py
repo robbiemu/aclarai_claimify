@@ -1,4 +1,3 @@
-# tools.py
 """
 Production-ready tool implementations for the Data Scout Agent.
 """
@@ -15,55 +14,188 @@ import shutil
 from typing import Optional, List, Dict, Any, Callable
 from urllib.parse import urljoin, urlparse
 
-import requests
-from bs4 import BeautifulSoup
+import httpx
 import pydantic
+from bs4 import BeautifulSoup
 from langchain_core.tools import tool
+
+from .litesearch import AsyncRateLimitManager, SearchProviderProxy
+from ..config import load_claimify_config
+
 
 # Optional import for deep crawling
 try:
     from libcrawler.libcrawler import crawl_and_convert
+
     _HAVE_LIBCRAWLER = True
 except ImportError:
     crawl_and_convert = None
     _HAVE_LIBCRAWLER = False
 
 # -------------------------
+# Globals for tool clients
+# -------------------------
+
+# Use a single rate manager and http client for all tools
+RATE_MANAGER = AsyncRateLimitManager()
+HTTP_CLIENT = httpx.AsyncClient()
+
+
+# Event loop management utilities
+def _ensure_event_loop():
+    """Ensure we have a running event loop, create one if needed."""
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_closed():
+            raise RuntimeError("Event loop is closed")
+        return loop
+    except RuntimeError:
+        # No event loop running or it's closed, create a new one
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+        except Exception:
+            # If we can't create a new loop, we'll handle this in the calling code
+            raise
+
+
+def _run_async_safely(coro):
+    """Run async code safely, handling event loop issues."""
+    try:
+        # First try to get current loop
+        loop = asyncio.get_running_loop()
+        # We're in an event loop, run in a thread with a new loop
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result(timeout=60)
+    except RuntimeError:
+        # No event loop running, safe to use asyncio.run
+        try:
+            return asyncio.run(coro)
+        except RuntimeError as e:
+            if "Event loop is closed" in str(e):
+                # Create a new event loop and try again
+                _ensure_event_loop()
+                return asyncio.run(coro)
+            raise
+
+
+# -------------------------
+# Pydantic schemas & tools
+# -------------------------
+
+
+class WebSearchInput(pydantic.BaseModel):
+    """Input schema for the web_search tool."""
+
+    query: str = pydantic.Field(description="The search query to execute.")
+
+
+def create_web_search_tool():
+    """
+    Factory function that creates a web_search tool with the configured provider hard-coded.
+    This ensures that the search provider is determined by the configuration, not by the agent.
+    """
+    config = load_claimify_config()
+    search_provider = "duckduckgo/search"
+    if config.scout_agent and config.scout_agent.search_provider:
+        search_provider = config.scout_agent.search_provider
+
+    @tool("web_search", args_schema=WebSearchInput)
+    def web_search(query: str) -> Dict[str, Any]:
+        """
+        Performs a web search using the configured provider and returns the results.
+        This tool is rate-limited to avoid API abuse.
+
+        Note: This function is synchronous to work with LangGraph's ToolNode.
+        It uses asyncio.run() internally to handle the async operations.
+        """
+        proxy = SearchProviderProxy(
+            provider=search_provider,
+            rate_limit_manager=RATE_MANAGER,
+            http_client=HTTP_CLIENT,
+        )
+        try:
+            # Run the async operation safely with improved event loop management
+            results = _run_async_safely(proxy.run(query))
+
+            return {
+                "query": query,
+                "results": results,
+                "provider": search_provider,
+                "status": "ok",
+            }
+        except Exception as e:
+            return {
+                "query": query,
+                "results": None,
+                "provider": search_provider,
+                "status": "error",
+                "error": f"{type(e).__name__}: {str(e)}",
+            }
+
+    return web_search
+
+
+# -------------------------
 # Utility helpers
 # -------------------------
-def _safe_request_get(url: str, timeout_s: int = 15, max_retries: int = 2, backoff: float = 1.0) -> requests.Response:
-    """Minimal retry wrapper around requests.get with exponential backoff."""
+def _safe_request_get(
+    url: str, timeout_s: int = 15, max_retries: int = 2, backoff: float = 1.0
+) -> httpx.Response:
+    """Minimal retry wrapper around httpx.get with exponential backoff."""
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
-            resp = requests.get(url, timeout=timeout_s, headers={"User-Agent": "DataScout/1.0"})
+            # CRITICAL FIX: Create the coroutine here, inside the loop, for each attempt.
+            async def do_request():
+                return await HTTP_CLIENT.get(
+                    url, timeout=timeout_s, headers={"User-Agent": "DataScout/1.0"}
+                )
+
+            # Run the coroutine for this specific attempt
+            resp = _run_async_safely(do_request())
             resp.raise_for_status()
             return resp
         except Exception as e:
             last_exc = e
             if attempt < max_retries:
-                time.sleep(backoff * (2 ** attempt))
+                time.sleep(backoff * (2**attempt))
             else:
                 raise
     raise last_exc  # pragma: no cover
 
-def _extract_main_text_and_title(html: str, css_selector: Optional[str] = None) -> Dict[str, str]:
+
+def _extract_main_text_and_title(
+    html: str, css_selector: Optional[str] = None
+) -> Dict[str, str]:
     """Extract title and main textual content from HTML."""
     soup = BeautifulSoup(html, "html5lib")
     title_tag = soup.find("title")
     title = title_tag.get_text(strip=True) if title_tag else ""
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]):
+    for tag in soup(
+        ["script", "style", "nav", "footer", "header", "aside", "noscript", "svg"]
+    ):
         tag.decompose()
     content_text = soup.get_text(" ", strip=True)
     content_text = re.sub(r"\s+\n", "\n", content_text)
     content_text = re.sub(r"[ \t]{2,}", " ", content_text).strip()
     return {"title": title, "text": content_text}
 
-def _to_markdown_simple(title: str, text: str, url: Optional[str] = None, add_front_matter: bool = True) -> str:
+
+def _to_markdown_simple(
+    title: str, text: str, url: Optional[str] = None, add_front_matter: bool = True
+) -> str:
     """Produce a simple Markdown representation."""
     parts = []
     if add_front_matter:
-        fm = {"source_url": url or "", "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        fm = {
+            "source_url": url or "",
+            "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
         parts.append(f"<!-- METADATA {json.dumps(fm)} -->\n")
     if title:
         parts.append(f"# {title}\n")
@@ -71,6 +203,7 @@ def _to_markdown_simple(title: str, text: str, url: Optional[str] = None, add_fr
     for p in paragraphs:
         parts.append(p + "\n")
     return "\n".join(parts).strip()
+
 
 def _sha256_of_file(path: str) -> str:
     """Computes the SHA256 checksum of a file."""
@@ -80,20 +213,37 @@ def _sha256_of_file(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+
 # -------------------------
 # Pydantic schemas & tools
 # -------------------------
 
+
 class UrlToMarkdownInput(pydantic.BaseModel):
     """Input schema for url_to_markdown tool."""
-    url: str = pydantic.Field(description="Fully qualified URL to fetch (e.g., https://example.com/article).")
-    css_selector: Optional[str] = pydantic.Field(default=None, description="Optional CSS selector to isolate the main content.")
+
+    url: str = pydantic.Field(
+        description="Fully qualified URL to fetch (e.g., https://example.com/article)."
+    )
+    css_selector: Optional[str] = pydantic.Field(
+        default=None, description="Optional CSS selector to isolate the main content."
+    )
     timeout_s: int = pydantic.Field(default=15, description="HTTP timeout in seconds.")
     max_retries: int = pydantic.Field(default=2, description="Network retry attempts.")
-    add_front_matter: bool = pydantic.Field(default=True, description="If true, include minimal front-matter metadata in the returned Markdown.")
+    add_front_matter: bool = pydantic.Field(
+        default=True,
+        description="If true, include minimal front-matter metadata in the returned Markdown.",
+    )
+
 
 @tool("url_to_markdown", args_schema=UrlToMarkdownInput)
-def url_to_markdown(url: str, css_selector: Optional[str] = None, timeout_s: int = 15, max_retries: int = 2, add_front_matter: bool = True) -> Dict[str, Any]:
+def url_to_markdown(
+    url: str,
+    css_selector: Optional[str] = None,
+    timeout_s: int = 15,
+    max_retries: int = 2,
+    add_front_matter: bool = True,
+) -> Dict[str, Any]:
     """
     Fetch a single web page, extract the main textual content and title, and return a Markdown string plus metadata.
     Returns a dictionary with status, URL, markdown, title, and a text snippet.
@@ -102,28 +252,69 @@ def url_to_markdown(url: str, css_selector: Optional[str] = None, timeout_s: int
         resp = _safe_request_get(url, timeout_s=timeout_s, max_retries=max_retries)
         html = resp.text
         extracted = _extract_main_text_and_title(html, css_selector=css_selector)
-        markdown = _to_markdown_simple(extracted["title"], extracted["text"], url=url, add_front_matter=add_front_matter)
+        markdown = _to_markdown_simple(
+            extracted["title"],
+            extracted["text"],
+            url=url,
+            add_front_matter=add_front_matter,
+        )
         snippet = extracted["text"][:500].strip()
-        return {"url": url, "markdown": markdown, "title": extracted["title"], "text_snippet": snippet, "status": "ok"}
+        return {
+            "url": url,
+            "markdown": markdown,
+            "title": extracted["title"],
+            "text_snippet": snippet,
+            "status": "ok",
+        }
     except Exception as e:
-        return {"url": url, "markdown": "", "title": "", "text_snippet": "", "status": "error", "error": f"{type(e).__name__}: {str(e)}"}
+        return {
+            "url": url,
+            "markdown": "",
+            "title": "",
+            "text_snippet": "",
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)}",
+        }
+
 
 class CrawlInput(pydantic.BaseModel):
     """Input schema for documentation_crawler tool."""
-    base_url: str = pydantic.Field(description="The base URL of the documentation site (e.g., https://example.com).")
-    starting_point: str = pydantic.Field(description="The starting path (e.g., /docs/ or /en/latest/).")
-    max_depth: int = pydantic.Field(default=3, description="Max crawl depth to avoid runaway crawls.")
-    allowed_paths: Optional[List[str]] = pydantic.Field(default=None, description="Optional list of URL paths to include during crawling.")
-    ignore_paths: Optional[List[str]] = pydantic.Field(default=None, description="Optional list of URL paths to skip during crawling.")
-    timeout_s: int = pydantic.Field(default=30, description="Timeout for network ops during heuristic scanning.")
-    similarity_threshold: float = pydantic.Field(default=0.7, description="Duplicate-similarity threshold for libcrawler.")
+
+    base_url: str = pydantic.Field(
+        description="The base URL of the documentation site (e.g., https://example.com)."
+    )
+    starting_point: str = pydantic.Field(
+        description="The starting path (e.g., /docs/ or /en/latest/)."
+    )
+    max_depth: int = pydantic.Field(
+        default=3, description="Max crawl depth to avoid runaway crawls."
+    )
+    allowed_paths: Optional[List[str]] = pydantic.Field(
+        default=None,
+        description="Optional list of URL paths to include during crawling.",
+    )
+    ignore_paths: Optional[List[str]] = pydantic.Field(
+        default=None, description="Optional list of URL paths to skip during crawling."
+    )
+    timeout_s: int = pydantic.Field(
+        default=30, description="Timeout for network ops during heuristic scanning."
+    )
+    similarity_threshold: float = pydantic.Field(
+        default=0.7, description="Duplicate-similarity threshold for libcrawler."
+    )
+
 
 if _HAVE_LIBCRAWLER:
+
     @tool("documentation_crawler", args_schema=CrawlInput)
     def documentation_crawler(
-        base_url: str, starting_point: str, max_depth: int = 3,
-        allowed_paths: Optional[List[str]] = None, ignore_paths: Optional[List[str]] = None,
-        timeout_s: int = 30, similarity_threshold: float = 0.7
+        base_url: str,
+        starting_point: str,
+        max_depth: int = 3,
+        allowed_paths: Optional[List[str]] = None,
+        ignore_paths: Optional[List[str]] = None,
+        timeout_s: int = 30,
+        similarity_threshold: float = 0.7,
     ) -> Dict[str, Any]:
         """
         Deep-crawl a documentation site using Playwright for JS rendering and return a structured result.
@@ -135,9 +326,17 @@ if _HAVE_LIBCRAWLER:
         try:
             resp = _safe_request_get(start_url, timeout_s=timeout_s, max_retries=1)
             soup = BeautifulSoup(resp.text, "html5lib")
-            hrefs = {urljoin(start_url, a["href"]) for a in soup.find_all("a", href=True)}
+            hrefs = {
+                urljoin(start_url, a["href"]) for a in soup.find_all("a", href=True)
+            }
         except Exception as e:
-            return {"base_url": base_url, "start_url": start_url, "pages": {}, "status": "error", "error": f"Pre-scan failed: {type(e).__name__}: {str(e)}"}
+            return {
+                "base_url": base_url,
+                "start_url": start_url,
+                "pages": {},
+                "status": "error",
+                "error": f"Pre-scan failed: {type(e).__name__}: {str(e)}",
+            }
 
         inferred_allowed = allowed_paths or []
         if not inferred_allowed:
@@ -149,7 +348,12 @@ if _HAVE_LIBCRAWLER:
                     if len(prefix) > 2:
                         common_prefixes[prefix] = common_prefixes.get(prefix, 0) + 1
             if common_prefixes:
-                inferred_allowed = [p for p, count in sorted(common_prefixes.items(), key=lambda item: item[1], reverse=True)[:3]]
+                inferred_allowed = [
+                    p
+                    for p, count in sorted(
+                        common_prefixes.items(), key=lambda item: item[1], reverse=True
+                    )[:3]
+                ]
             else:
                 inferred_allowed = [starting_point]
 
@@ -165,35 +369,60 @@ if _HAVE_LIBCRAWLER:
         try:
             asyncio.run(
                 crawl_and_convert(
-                    start_url=start_url, base_url=base_url_clean, output_filename=output_file,
-                    allowed_paths=inferred_allowed, ignore_paths=inferred_ignore,
-                    similarity_threshold=similarity_threshold
+                    start_url=start_url,
+                    base_url=base_url_clean,
+                    output_filename=output_file,
+                    allowed_paths=inferred_allowed,
+                    ignore_paths=inferred_ignore,
+                    similarity_threshold=similarity_threshold,
                 )
             )
             if os.path.exists(output_file):
                 with open(output_file, "r", encoding="utf-8") as f:
                     md_all = f.read()
                 summary = md_all[:1000] + ("..." if len(md_all) > 1000 else "")
-                pedigree_entry = (
-                    f"### {time.strftime('%Y-%m-%d')} — Documentation Crawl: {base_url}\n"
-                    f"- **Start URL:** `{start_url}`\n"
-                    f"- **Allowed Paths (Inferred):** `{json.dumps(inferred_allowed)}`\n"
-                    f"- **Ignored Paths (Inferred):** `{json.dumps(inferred_ignore)}`"
-                )
-                return {"base_url": base_url, "start_url": start_url, "full_markdown": md_all, "summary": summary, "pedigree_entry": pedigree_entry, "status": "ok"}
+                pedigree_entry = f"""### {time.strftime("%Y-%m-%d")} — Documentation Crawl: {base_url}
+- **Start URL:** `{start_url}`
+- **Allowed Paths (Inferred):** `{json.dumps(inferred_allowed)}`
+- **Ignored Paths (Inferred):** `{json.dumps(inferred_ignore)}`"""
+                return {
+                    "base_url": base_url,
+                    "start_url": start_url,
+                    "full_markdown": md_all,
+                    "summary": summary,
+                    "pedigree_entry": pedigree_entry,
+                    "status": "ok",
+                }
             else:
-                return {"base_url": base_url, "start_url": start_url, "pages": {}, "status": "error", "error": "libcrawler completed but output file was not created"}
+                return {
+                    "base_url": base_url,
+                    "start_url": start_url,
+                    "pages": {},
+                    "status": "error",
+                    "error": "libcrawler completed but output file was not created",
+                }
         except Exception as e:
-            return {"base_url": base_url, "start_url": start_url, "pages": {}, "status": "error", "error": f"crawl_and_convert failed: {type(e).__name__}: {str(e)}"}
+            return {
+                "base_url": base_url,
+                "start_url": start_url,
+                "pages": {},
+                "status": "error",
+                "error": f"crawl_and_convert failed: {type(e).__name__}: {str(e)}",
+            }
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 else:
     documentation_crawler = None
 
+
 class WriteFileInput(pydantic.BaseModel):
     """Input schema for write_file tool."""
-    filepath: str = pydantic.Field(description="Full path (directory + filename) to write.")
+
+    filepath: str = pydantic.Field(
+        description="Full path (directory + filename) to write."
+    )
     content: str = pydantic.Field(description="Text content to write.")
+
 
 @tool("write_file", args_schema=WriteFileInput)
 def write_file(filepath: str, content: str) -> Dict[str, Any]:
@@ -204,47 +433,52 @@ def write_file(filepath: str, content: str) -> Dict[str, Any]:
             f.write(content)
         bytes_written = len(content.encode("utf-8"))
         sha = _sha256_of_file(filepath)
-        return {"filepath": filepath, "bytes_written": bytes_written, "sha256": sha, "status": "ok"}
+        return {
+            "filepath": filepath,
+            "bytes_written": bytes_written,
+            "sha256": sha,
+            "status": "ok",
+        }
     except Exception as e:
-        return {"filepath": filepath, "bytes_written": 0, "sha256": None, "status": "error", "error": f"{type(e).__name__}: {str(e)}"}
+        return {
+            "filepath": filepath,
+            "bytes_written": 0,
+            "sha256": None,
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)}",
+        }
 
-class AppendPedigreeInput(pydantic.BaseModel):
-    """Input schema for the append_to_pedigree tool."""
-    entry_markdown: str = pydantic.Field(description="Fully formatted markdown string to be appended to the pedigree file.")
-    run_id: Optional[str] = pydantic.Field(default=None, description="Optional run/thread id for grouping entries.")
 
-@tool("append_to_pedigree", args_schema=AppendPedigreeInput)
-def append_to_pedigree(pedigree_path: str, entry_markdown: str, run_id: Optional[str] = None) -> Dict[str, Any]:
-    """Appends a markdown entry to the pedigree file in a standardized block with a timestamp."""
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    header = f"---\nrun_id: {run_id or 'N/A'}\ntimestamp: {timestamp}\n---\n"
-    final_entry = header + entry_markdown + "\n"
-    try:
-        os.makedirs(os.path.dirname(pedigree_path), exist_ok=True)
-        with open(pedigree_path, "a", encoding="utf-8") as f:
-            f.write(final_entry)
-        return {"pedigree_path": pedigree_path, "status": "ok", "entry_snippet": final_entry[:200]}
-    except Exception as e:
-        return {"pedigree_path": pedigree_path, "status": "error", "entry_snippet": None, "error": f"{type(e).__name__}: {str(e)}"}
+# -------------------------
+# Fallback sample generation
+# -------------------------
+
+# A proper synthetic agent would need to be context-aware and generate targeted examples, a tool may not be useful for this.
 
 # -------------------------
 # Tool discovery / role scoping
 # -------------------------
 
+
 def get_available_tools() -> List[Callable]:
     """Return actual tool callables available in this environment."""
-    core_tools = [url_to_markdown, write_file, append_to_pedigree]
+    # Create the web_search tool with the configured provider
+    web_search = create_web_search_tool()
+    core_tools = [url_to_markdown, write_file, web_search]
     optional = [documentation_crawler] if _HAVE_LIBCRAWLER else []
     return core_tools + optional
+
 
 def get_tools_for_role(role: str) -> List[Callable]:
     """Return tools intended for a specific role."""
     role = (role or "").lower()
+    # Create the web_search tool with the configured provider
+    web_search = create_web_search_tool()
     mapping = {
-        "research": [url_to_markdown] + ([documentation_crawler] if _HAVE_LIBCRAWLER else []),
-        "archive": [write_file, append_to_pedigree],
+        "research": [web_search, url_to_markdown]
+        + ([documentation_crawler] if _HAVE_LIBCRAWLER else []),
+        "archive": [],
         "supervisor": [],
         "fitness": [],
-        "synthetic": []
     }
     return mapping.get(role, [])

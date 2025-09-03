@@ -13,13 +13,15 @@ This guide will walk you through how to use the agent to curate a custom corpus 
 *   **Cleans and Validates:** Extracts core content and runs "fitness checks" to ensure the data is useful.
 *   **Creates an Audit Trail:** Automatically generates a `PEDIGREE.md` file to track the provenance of every piece of data.
 
+The agent is configured to use the `ollama/gpt-oss:20b` model by default, but this can be changed in the configuration files.
+
 ## 2. Prerequisites
 
-Before you begin, ensure you have installed the project with the optional `[agent]` dependencies. This provides the agent with all the necessary libraries, including LangGraph.
+Before you begin, ensure you have installed the project with the optional `[scout]` dependencies. This provides the agent with all the necessary libraries, including LangGraph, LiteLLM, and the TUI components (Textual and Typer).
 
 ```bash
 # From the root of the project repository
-pip install -e .[agent]
+uv sync --extra scout
 ```
 
 ## 3. The Core Concept: The Mission Plan
@@ -49,13 +51,32 @@ missions:
 
 #### **Step 2: Execute the Agent**
 
-Run the agent from your terminal, pointing it to your new mission plan.
+You have two options for running the agent:
+
+**Option A: Using the Terminal User Interface (TUI) - Recommended**
+
+Run the interactive TUI that shows real-time progress, agent conversation, and statistics:
 
 ```bash
-aclarai-claimify-scout --mission-plan settings/simple_mission.yaml
+python3 datascout_tui.py settings/simple_mission.yaml
 ```
 
-The agent will now begin its work. You will see logs in your terminal as it brainstorms a strategy, searches for sources, extracts text, and validates the content.
+The TUI provides:
+- Real-time progress tracking with ETA and throughput metrics
+- Live agent conversation showing prompts and responses
+- Pause/resume controls (`p` key)
+- Mission status and error monitoring
+- Interactive controls (`q` to quit, `r` to restart)
+
+**Option B: Using the Command-Line Interface**
+
+Run the agent from your terminal in batch mode:
+
+```bash
+aclarai-claimify-scout --mission settings/simple_mission.yaml
+```
+
+Both methods will execute the same underlying agent. The TUI is recommended for interactive use as it provides better visibility into the agent's progress and allows for real-time control.
 
 #### **Step 3: Review the Output**
 
@@ -101,7 +122,13 @@ missions:
           - "historical narratives"
           - "multi-paragraph news stories"
       
-      # ... and so on for other goals.```
+      - # Goal 3: Find text to test "Atomicity" (Decomposition).
+        characteristic: "Atomicity"
+        topics:
+          - "legal documents"
+          - "policy summaries"
+          - "contract clauses"
+```
 
 ## 6. The Full Workflow: From Scout to Compiled Artifact
 
@@ -111,7 +138,11 @@ The Data Scout Agent is the first step in a three-step pipeline to create a fina
 Run the agent with your configured mission plan to produce the Tier 2 raw text corpus.
 
 ```bash
-aclarai-claimify-scout --mission-plan settings/scout_mission.yaml
+# Option A: Interactive TUI (recommended for monitoring progress)
+python3 datascout_tui.py settings/scout_mission.yaml
+
+# Option B: Command-line batch mode
+aclarai-claimify-scout --mission settings/scout_mission.yaml
 ```
 
 **Step 2: Generate the "Gold Standard" Dataset**

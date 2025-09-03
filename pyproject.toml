@@ -18,7 +18,7 @@ dev = [
 ]
 optimization = [
     "dspy-ai>=2.4.0",
-    "litellm>=1.0.0",
+    "litellm",
     "rich>=13.0.0",
     "tqdm>=4.65.0",
     "sentence-transformers",
@@ -28,7 +28,10 @@ optimization = [
 scout = [
     "langgraph",
     "langgraph-checkpoint-sqlite",
-    "langchain-openai",
+    "langchain-community",
+    "langchain-litellm",
+    "langchain-tavily",
+    "langchain-google-community",
     "attachments",
     "pydantic",
     "beautifulsoup4",
@@ -36,13 +39,20 @@ scout = [
     "langsmith",
     "requests",
     "html5lib",
+    "httpx",
+    "google-api-python-client",
+    "google-search-results",
+    "json-repair",
+    # TUI dependencies for datascout_tui.py
+    "textual>=0.48.0",
+    "typer>=0.9.0",
 ]
-# Optional dependency for the scout agent's crawler tool
+# Optional dependency for the scout agent's crawler tool, requires playwright is installed on the system
 crawler = ["libcrawler"]
 
 [project.scripts]
 aclarai-claimify = "aclarai_claimify.cli:main"
-aclarai-claimify-scout = "aclarai_claimify.scout.main:run"
+aclarai-claimify-scout = "aclarai_claimify.scout.main:main"
 
 [tool.setuptools]
 packages = [

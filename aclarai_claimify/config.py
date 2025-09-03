@@ -51,6 +51,7 @@ def _parse_claimify_config_data(
         flat_config = {
             "context_window_p": window_config.get("p"),
             "context_window_f": window_config.get("f"),
+            "agents": config_data.get("agents", {}),
             "selection_model": model_config.get("selection"),
             "disambiguation_model": model_config.get("disambiguation"),
             "decomposition_model": model_config.get("decomposition"),

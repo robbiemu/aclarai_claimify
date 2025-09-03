@@ -18,11 +18,10 @@ processing:
       log_decisions: true
       log_transformations: true
       log_timing: true
-  timeout_seconds: 30
+  timeout_seconds: 45
   temperature: 0.1
   max_tokens: 1000
 
-# NEW SECTION for the generate-dataset tool
 generate_dataset:
   # User can choose the context generation method. Options: "semantic" or "static"
   method: "semantic"
@@ -42,11 +41,15 @@ generate_dataset:
   static:
     k_window_size: 3 # The number of sentences before/after
 
-# NEW SECTION for the Data Scout Agent
 scout_agent:
+  search_provider: "brave/search"
+  initial_prompt: |
+    Begin the data prospecting mission based on your configured mission plan.
+  nodes:
+    research:
+      max_iterations: 7
   mission_plan:
     goal: "Find reliable, verifiable data sources to build a training corpus about the safety and efficacy of GLP-1 agonists for weight loss."
-    max_iterations: 5
     nodes:
       - name: "DeconstructGoalNode"
         model: "ollama/gpt-oss:20b"

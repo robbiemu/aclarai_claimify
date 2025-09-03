@@ -330,3 +330,6 @@ cline.json
 
 docs/tasks/
 docs/claimify-extraction.plan.md
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
