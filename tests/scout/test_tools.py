@@ -7,8 +7,7 @@ from aclarai_claimify.scout.tools import (
     get_tools_for_role,
 )
 
-# Create the web_search tool for testing
-web_search = create_web_search_tool()
+# Don't create the web_search tool at module level since it causes issues with mocking
 
 
 class TestTools:
@@ -21,6 +20,11 @@ class TestTools:
         tool_names = [tool.name for tool in research_tools]
         assert "web_search" in tool_names
         assert "url_to_markdown" in tool_names
+        # Check that our new tools are included
+        assert "arxiv_search" in tool_names
+        assert "arxiv_get_content" in tool_names
+        assert "wikipedia_search" in tool_names
+        assert "wikipedia_get_content" in tool_names
 
         # Test synthetic role
         # we have no tools to test
@@ -29,15 +33,15 @@ class TestTools:
         archive_tools = get_tools_for_role("archive")
         tool_names = [tool.name for tool in archive_tools]
         assert "write_file" in tool_names
-        assert "append_to_pedigree" in tool_names
 
-    @patch("aclarai_claimify.scout.tools.SearchProviderProxy")
-    def test_web_search_success(self, mock_search_proxy):
+    @patch("aclarai_claimify.scout.tools._run_async_safely")
+    def test_web_search_success(self, mock_run_async_safely):
         """Test successful web search."""
-        # Mock the search provider
-        mock_proxy_instance = MagicMock()
-        mock_proxy_instance.run.return_value = "Test search results"
-        mock_search_proxy.return_value = mock_proxy_instance
+        # Create the web search tool inside the test
+        web_search = create_web_search_tool()
+        
+        # Mock the async result
+        mock_run_async_safely.return_value = "Test search results"
 
         # Call the tool
         result = web_search("test query")
@@ -48,15 +52,16 @@ class TestTools:
         assert result["results"] == "Test search results"
         # The provider should now be the configured provider, not the default
         # Since we're not mocking the config, it will fall back to the default
-        assert result["provider"] == "google/search"
+        assert result["provider"] == "brave/search"
 
-    @patch("aclarai_claimify.scout.tools.SearchProviderProxy")
-    def test_web_search_failure(self, mock_search_proxy):
+    @patch("aclarai_claimify.scout.tools._run_async_safely")
+    def test_web_search_failure(self, mock_run_async_safely):
         """Test failed web search."""
-        # Mock the search provider to raise an exception
-        mock_proxy_instance = MagicMock()
-        mock_proxy_instance.run.side_effect = Exception("Search failed")
-        mock_search_proxy.return_value = mock_proxy_instance
+        # Create the web search tool inside the test
+        web_search = create_web_search_tool()
+        
+        # Mock the async result to raise an exception
+        mock_run_async_safely.side_effect = Exception("Search failed")
 
         # Call the tool
         result = web_search("test query")

@@ -64,7 +64,7 @@ def _run_async_safely(coro):
     """Run async code safely, handling event loop issues."""
     try:
         # First try to get current loop
-        loop = asyncio.get_running_loop()
+        _loop = asyncio.get_running_loop()
         # We're in an event loop, run in a thread with a new loop
         import concurrent.futures
 
@@ -140,32 +140,348 @@ def create_web_search_tool():
     return web_search
 
 
+class ArxivSearchInput(pydantic.BaseModel):
+    """Input schema for the arxiv_search tool."""
+
+    query: str = pydantic.Field(description="The search query to execute on Arxiv.")
+
+
+@tool("arxiv_search", args_schema=ArxivSearchInput)
+def arxiv_search(query: str) -> Dict[str, Any]:
+    """
+    Performs a search on Arxiv and returns the results.
+    This tool is rate-limited to avoid API abuse.
+
+    Note: This function is synchronous to work with LangGraph's ToolNode.
+    It uses asyncio.run() internally to handle the async operations.
+    """
+    proxy = SearchProviderProxy(
+        provider="arxiv/search",
+        rate_limit_manager=RATE_MANAGER,
+        http_client=HTTP_CLIENT,
+    )
+    try:
+        # Run the async operation safely with improved event loop management
+        results = _run_async_safely(proxy.run(query))
+
+        return {
+            "query": query,
+            "results": results,
+            "provider": "arxiv/search",
+            "status": "ok",
+        }
+    except Exception as e:
+        return {
+            "query": query,
+            "results": None,
+            "provider": "arxiv/search",
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)}",
+        }
+
+
+class ArxivGetContentInput(pydantic.BaseModel):
+    """Input schema for the arxiv_get_content tool."""
+
+    query: str = pydantic.Field(description="The search query to get content for from Arxiv.")
+
+
+@tool("arxiv_get_content", args_schema=ArxivGetContentInput)
+def arxiv_get_content(query: str) -> Dict[str, Any]:
+    """
+    Retrieves detailed content from Arxiv based on a search query.
+    This tool is rate-limited to avoid API abuse.
+
+    Note: This function is synchronous to work with LangGraph's ToolNode.
+    It uses asyncio.run() internally to handle the async operations.
+    """
+    try:
+        # Using LangChain's ArxivAPIWrapper for detailed content retrieval
+        from langchain_community.utilities import ArxivAPIWrapper
+        
+        arxiv_wrapper = ArxivAPIWrapper(
+            top_k_results=5,
+            ARXIV_MAX_QUERY_LENGTH=300,
+            load_max_docs=5,
+            load_all_available_meta=False,
+            doc_content_chars_max=8000
+        )
+        
+        # Get detailed documents
+        docs = arxiv_wrapper.load(query)
+        
+        # Format the results for consistency
+        formatted_results = []
+        for doc in docs:
+            formatted_results.append({
+                "title": doc.metadata.get("Title", "N/A"),
+                "authors": doc.metadata.get("Authors", "N/A"),
+                "published": doc.metadata.get("Published", "N/A"),
+                "summary": doc.metadata.get("Summary", "N/A"),
+                "content": doc.page_content[:8000] if doc.page_content else "N/A"
+            })
+        
+        return {
+            "query": query,
+            "results": formatted_results,
+            "provider": "arxiv/get_content",
+            "status": "ok",
+        }
+    except Exception as e:
+        return {
+            "query": query,
+            "results": None,
+            "provider": "arxiv/get_content",
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)}",
+        }
+
+
+class WikipediaSearchInput(pydantic.BaseModel):
+    """Input schema for the wikipedia_search tool."""
+
+    query: str = pydantic.Field(description="The search query to execute on Wikipedia.")
+
+
+@tool("wikipedia_search", args_schema=WikipediaSearchInput)
+def wikipedia_search(query: str) -> Dict[str, Any]:
+    """
+    Performs a search on Wikipedia and returns the results.
+    This tool is rate-limited to avoid API abuse.
+
+    Note: This function is synchronous to work with LangGraph's ToolNode.
+    It uses asyncio.run() internally to handle the async operations.
+    """
+    proxy = SearchProviderProxy(
+        provider="wikipedia/search",
+        rate_limit_manager=RATE_MANAGER,
+        http_client=HTTP_CLIENT,
+    )
+    try:
+        # Run the async operation safely with improved event loop management
+        results = _run_async_safely(proxy.run(query))
+
+        return {
+            "query": query,
+            "results": results,
+            "provider": "wikipedia/search",
+            "status": "ok",
+        }
+    except Exception as e:
+        return {
+            "query": query,
+            "results": None,
+            "provider": "wikipedia/search",
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)}",
+        }
+
+
+class WikipediaGetContentInput(pydantic.BaseModel):
+    """Input schema for the wikipedia_get_content tool."""
+
+    query: str = pydantic.Field(description="The search query to get content for from Wikipedia.")
+
+
+@tool("wikipedia_get_content", args_schema=WikipediaGetContentInput)
+def wikipedia_get_content(query: str) -> Dict[str, Any]:
+    """
+    Retrieves detailed content from Wikipedia based on a search query.
+    This tool is rate-limited to avoid API abuse.
+
+    Note: This function is synchronous to work with LangGraph's ToolNode.
+    It uses asyncio.run() internally to handle the async operations.
+    """
+    try:
+        # Using LangChain's WikipediaAPIWrapper for detailed content retrieval
+        from langchain_community.utilities import WikipediaAPIWrapper
+        
+        wikipedia_wrapper = WikipediaAPIWrapper(
+            top_k_results=3,
+            lang="en",
+            load_all_available_meta=False,
+            doc_content_chars_max=8000
+        )
+        
+        # Get detailed documents
+        docs = wikipedia_wrapper.load(query)
+        
+        # Format the results for consistency
+        formatted_results = []
+        for doc in docs:
+            formatted_results.append({
+                "title": doc.metadata.get("title", "N/A"),
+                "summary": doc.metadata.get("summary", "N/A"),
+                "content": doc.page_content[:8000] if doc.page_content else "N/A"
+            })
+        
+        return {
+            "query": query,
+            "results": formatted_results,
+            "provider": "wikipedia/get_content",
+            "status": "ok",
+        }
+    except Exception as e:
+        return {
+            "query": query,
+            "results": None,
+            "provider": "wikipedia/get_content",
+            "status": "error",
+            "error": f"{type(e).__name__}: {str(e)}",
+        }
+
+
 # -------------------------
 # Utility helpers
 # -------------------------
+
+def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str, Any]:
+    """
+    Truncate tool responses based on the max_tokens setting for the given role.
+    
+    Args:
+        response: The tool response to potentially truncate
+        role: The role of the agent calling the tool
+        
+    Returns:
+        The response, possibly with truncated results
+    """
+    # Load the configuration to get max_tokens for the role
+    config = load_claimify_config()
+    
+    # Get max_tokens for the role
+    max_tokens = None
+    if config.scout_agent and config.scout_agent.mission_plan:
+        node_config = config.scout_agent.mission_plan.get_node_config(role)
+        if node_config:
+            max_tokens = node_config.max_tokens
+        else:
+            # Fallback to default max_tokens from config
+            max_tokens = config.max_tokens
+    
+    # If we couldn't determine max_tokens, use a reasonable default
+    if max_tokens is None:
+        max_tokens = 1000
+    
+    # Only truncate if we have a results field that's a string
+    if "results" in response and isinstance(response["results"], str):
+        # Rough approximation: assume 1 token ≈ 4 characters
+        max_chars = max_tokens * 4
+        
+        # If the results are longer than our limit, truncate them
+        if len(response["results"]) > max_chars:
+            truncated = response["results"][:max_chars]
+            # Add a note that the response was truncated
+            response["results"] = truncated + f"\n\n[Response truncated to {max_chars} characters due to token limits for role '{role}']"
+    
+    return response
+
+
 def _safe_request_get(
     url: str, timeout_s: int = 15, max_retries: int = 2, backoff: float = 1.0
 ) -> httpx.Response:
-    """Minimal retry wrapper around httpx.get with exponential backoff."""
+    """Retry wrapper around httpx.get with exponential backoff and proper rate limit handling."""
+
+    import urllib.parse
+    from httpx import HTTPStatusError
+
+    # Extract domain for rate limiting
+    domain = urllib.parse.urlparse(url).netloc
+
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
-            # CRITICAL FIX: Create the coroutine here, inside the loop, for each attempt.
-            async def do_request():
-                return await HTTP_CLIENT.get(
-                    url, timeout=timeout_s, headers={"User-Agent": "DataScout/1.0"}
-                )
+            # Apply basic rate limiting: wait for domain-specific requests
+            # Use the global rate manager to respect per-domain limits
+            async def do_rate_limited_request():
+                async with RATE_MANAGER.acquire(
+                    f"domain:{domain}", requests_per_second=2.0
+                ):
+                    return await HTTP_CLIENT.get(
+                        url, timeout=timeout_s, headers={"User-Agent": "DataScout/1.0"}
+                    )
 
             # Run the coroutine for this specific attempt
-            resp = _run_async_safely(do_request())
+            resp = _run_async_safely(do_rate_limited_request())
+
+            # Update rate limit info from headers if available
+            RATE_MANAGER.update_from_headers(f"domain:{domain}", resp.headers)
+
             resp.raise_for_status()
             return resp
+
+        except HTTPStatusError as e:
+            last_exc = e
+
+            # Handle 429 (Too Many Requests) with special backoff
+            if e.response.status_code == 429:
+                # Check for Retry-After header
+                retry_after = e.response.headers.get("retry-after")
+                if retry_after:
+                    try:
+                        wait_time = int(retry_after)
+                        print(
+                            f"      ⏳ Rate limited (429) for {url}, waiting {wait_time}s as instructed"
+                        )
+                        time.sleep(min(wait_time, 60))  # Cap at 60 seconds
+                        continue
+                    except ValueError:
+                        pass  # Fall back to exponential backoff
+
+                # No retry-after, use longer backoff for rate limits
+                if attempt < max_retries:
+                    rate_limit_backoff = backoff * (
+                        3**attempt
+                    )  # More aggressive for 429s
+                    print(
+                        f"      ⏳ Rate limited (429) for {url}, backing off {rate_limit_backoff:.1f}s"
+                    )
+                    time.sleep(rate_limit_backoff)
+                    continue
+                else:
+                    print(
+                        f"      ❌ Rate limit exceeded for {url} after {max_retries + 1} attempts"
+                    )
+                    raise
+
+            # Handle other 4xx errors (don't retry client errors except 429)
+            elif 400 <= e.response.status_code < 500:
+                print(
+                    f"      ❌ Client error {e.response.status_code} for {url}, not retrying"
+                )
+                raise
+
+            # Handle 5xx errors (server errors, worth retrying)
+            elif e.response.status_code >= 500:
+                if attempt < max_retries:
+                    server_error_backoff = backoff * (2**attempt)
+                    print(
+                        f"      ⚠️ Server error {e.response.status_code} for {url}, retrying in {server_error_backoff:.1f}s"
+                    )
+                    time.sleep(server_error_backoff)
+                    continue
+                else:
+                    print(
+                        f"      ❌ Server error persisted for {url} after {max_retries + 1} attempts"
+                    )
+                    raise
+
         except Exception as e:
             last_exc = e
+            # For other exceptions (timeouts, connection errors, etc.)
             if attempt < max_retries:
-                time.sleep(backoff * (2**attempt))
+                regular_backoff = backoff * (2**attempt)
+                error_type = type(e).__name__
+                print(
+                    f"      ⚠️ {error_type} for {url}, retrying in {regular_backoff:.1f}s"
+                )
+                time.sleep(regular_backoff)
             else:
+                print(
+                    f"      ❌ {type(e).__name__} for {url} after {max_retries + 1} attempts"
+                )
                 raise
+
     raise last_exc  # pragma: no cover
 
 
@@ -318,17 +634,30 @@ if _HAVE_LIBCRAWLER:
     ) -> Dict[str, Any]:
         """
         Deep-crawl a documentation site using Playwright for JS rendering and return a structured result.
-        This tool pre-scans the start page to infer sensible allowed/ignored paths if none are provided.
+        
+        Best practices for configuration:
+        1. It's highly recommended to first download and examine the starting page using the url_to_markdown tool
+           to understand the site structure before running this crawler.
+        2. Use the insights from the starting page to set appropriate allowed_paths and ignore_paths.
+        3. Start with a shallow max_depth (1-2) and increase gradually to avoid crawling too much content.
+        
+        The tool will attempt to infer sensible allowed/ignored paths if none are provided, but manual 
+        configuration typically yields better results.
         """
         base_url_clean = base_url.rstrip("/")
         start_url = urljoin(base_url_clean + "/", starting_point.lstrip("/"))
 
+        # Enhanced pre-scan with better path analysis
         try:
             resp = _safe_request_get(start_url, timeout_s=timeout_s, max_retries=1)
             soup = BeautifulSoup(resp.text, "html5lib")
             hrefs = {
                 urljoin(start_url, a["href"]) for a in soup.find_all("a", href=True)
             }
+            
+            # Extract page title for better context
+            title_tag = soup.find("title")
+            page_title = title_tag.get_text(strip=True) if title_tag else "Unknown"
         except Exception as e:
             return {
                 "base_url": base_url,
@@ -338,15 +667,27 @@ if _HAVE_LIBCRAWLER:
                 "error": f"Pre-scan failed: {type(e).__name__}: {str(e)}",
             }
 
+        # Improved path inference with more sophisticated analysis
         inferred_allowed = allowed_paths or []
         if not inferred_allowed:
             common_prefixes = {}
+            path_frequencies = {}
+            
             for href in hrefs:
                 if href.startswith(base_url_clean):
                     path = urlparse(href).path
-                    prefix = "/" + "/".join(path.strip("/").split("/")[:2])
-                    if len(prefix) > 2:
-                        common_prefixes[prefix] = common_prefixes.get(prefix, 0) + 1
+                    # Count path segments to identify common structures
+                    segments = [seg for seg in path.strip("/").split("/") if seg]
+                    if segments:
+                        # Track common first segments (e.g., /docs, /api, /guides)
+                        first_segment = "/" + segments[0] if segments else "/"
+                        common_prefixes[first_segment] = common_prefixes.get(first_segment, 0) + 1
+                        
+                        # Track path depth frequencies
+                        depth = len(segments)
+                        path_frequencies[depth] = path_frequencies.get(depth, 0) + 1
+            
+            # Sort by frequency and take top 3 paths
             if common_prefixes:
                 inferred_allowed = [
                     p
@@ -357,8 +698,13 @@ if _HAVE_LIBCRAWLER:
             else:
                 inferred_allowed = [starting_point]
 
+        # Enhanced ignore patterns with more comprehensive defaults
         inferred_ignore = ignore_paths or []
-        common_ignores = ["/login", "/signup", "/search"]
+        common_ignores = [
+            "/login", "/signup", "/search", "/admin", "/dashboard", 
+            "/account", "/profile", "/settings", "/download", "/assets",
+            "/static", "/images", "/css", "/js", "/fonts"
+        ]
         for ignore in common_ignores:
             if ignore not in inferred_ignore:
                 inferred_ignore.append(ignore)
@@ -367,6 +713,7 @@ if _HAVE_LIBCRAWLER:
         output_file = os.path.join(temp_dir, "crawled_docs.md")
 
         try:
+            # Pass additional metadata to libcrawler for better processing
             asyncio.run(
                 crawl_and_convert(
                     start_url=start_url,
@@ -375,6 +722,7 @@ if _HAVE_LIBCRAWLER:
                     allowed_paths=inferred_allowed,
                     ignore_paths=inferred_ignore,
                     similarity_threshold=similarity_threshold,
+                    max_depth=max_depth,
                 )
             )
             if os.path.exists(output_file):
@@ -383,11 +731,15 @@ if _HAVE_LIBCRAWLER:
                 summary = md_all[:1000] + ("..." if len(md_all) > 1000 else "")
                 pedigree_entry = f"""### {time.strftime("%Y-%m-%d")} — Documentation Crawl: {base_url}
 - **Start URL:** `{start_url}`
+- **Page Title:** `{page_title}`
+- **Max Depth:** `{max_depth}`
+- **Similarity Threshold:** `{similarity_threshold}`
 - **Allowed Paths (Inferred):** `{json.dumps(inferred_allowed)}`
 - **Ignored Paths (Inferred):** `{json.dumps(inferred_ignore)}`"""
                 return {
                     "base_url": base_url,
                     "start_url": start_url,
+                    "page_title": page_title,
                     "full_markdown": md_all,
                     "summary": summary,
                     "pedigree_entry": pedigree_entry,
@@ -464,7 +816,7 @@ def get_available_tools() -> List[Callable]:
     """Return actual tool callables available in this environment."""
     # Create the web_search tool with the configured provider
     web_search = create_web_search_tool()
-    core_tools = [url_to_markdown, write_file, web_search]
+    core_tools = [url_to_markdown, write_file, web_search, arxiv_search, arxiv_get_content, wikipedia_search, wikipedia_get_content]
     optional = [documentation_crawler] if _HAVE_LIBCRAWLER else []
     return core_tools + optional
 
@@ -472,13 +824,39 @@ def get_available_tools() -> List[Callable]:
 def get_tools_for_role(role: str) -> List[Callable]:
     """Return tools intended for a specific role."""
     role = (role or "").lower()
+
     # Create the web_search tool with the configured provider
     web_search = create_web_search_tool()
-    mapping = {
-        "research": [web_search, url_to_markdown]
-        + ([documentation_crawler] if _HAVE_LIBCRAWLER else []),
-        "archive": [],
+
+    all_tools = {
+        "web_search": web_search,
+        "arxiv_search": arxiv_search,
+        "arxiv_get_content": arxiv_get_content,
+        "wikipedia_search": wikipedia_search,
+        "wikipedia_get_content": wikipedia_get_content,
+        "url_to_markdown": url_to_markdown,
+        "documentation_crawler": documentation_crawler,
+        "write_file": write_file,
+    }
+
+    # Define which tools are available for each role
+    role_mapping = {
+        "research": [
+            "web_search",
+            "arxiv_search",
+            "arxiv_get_content",
+            "wikipedia_search",
+            "wikipedia_get_content",
+            "url_to_markdown",
+        ],
+        "archive": ["write_file"],
         "supervisor": [],
         "fitness": [],
+        "synthetic": [],
     }
-    return mapping.get(role, [])
+
+    if _HAVE_LIBCRAWLER:
+        role_mapping["research"].append("documentation_crawler")
+
+    tool_names_for_role = role_mapping.get(role, [])
+    return [all_tools[tool_name] for tool_name in tool_names_for_role if tool_name in all_tools]

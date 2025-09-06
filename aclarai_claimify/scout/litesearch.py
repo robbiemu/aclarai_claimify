@@ -2,7 +2,7 @@ import os
 import time
 import asyncio
 import httpx
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from contextlib import asynccontextmanager
 from collections import deque
 
@@ -110,17 +110,17 @@ class AsyncRateLimitManager:
 
         if remaining is not None:
             # Handle comma-separated values (Brave API returns "0, 1995" format)
-            remaining_str = str(remaining).split(',')[0].strip()
+            remaining_str = str(remaining).split(",")[0].strip()
             try:
                 state["remaining"] = int(remaining_str)
                 state["initialized"] = True  # Mark as initialized
             except ValueError:
                 # If parsing fails, keep using default conservative approach
                 pass
-                
+
         if reset is not None:
             # Handle comma-separated values (Brave API returns "1, 2369545" format)
-            reset_str = str(reset).split(',')[0].strip()
+            reset_str = str(reset).split(",")[0].strip()
             try:
                 state["reset_time"] = int(reset_str)
             except ValueError:
@@ -155,7 +155,7 @@ class SearchProviderProxy:
         self.http_client = http_client
         self.client, self.is_custom = self._get_client()
 
-    def _get_client(self) -> (Any, bool):
+    def _get_client(self) -> Tuple[Any, bool]:
         """
         Maps the provider string to a handler.
 
@@ -175,9 +175,9 @@ class SearchProviderProxy:
             "bing/search": BingSearchAPIWrapper,
             "serpapi/search": SerpAPIWrapper,
             "you/search": YouSearchAPIWrapper,
-            "arxiv/search": ArxivAPIWrapper,
             "pubmed/search": PubMedAPIWrapper,
             "wikipedia/search": WikipediaAPIWrapper,
+            "arxiv/search": ArxivAPIWrapper,
         }
         if self.provider in provider_map:
             client_class = provider_map[self.provider]
@@ -208,7 +208,7 @@ class SearchProviderProxy:
             return "No good search results found."
 
         snippets = [
-            f"Snippet {i+1}: {result.get('description', 'N/A')}"
+            f"Snippet {i + 1}: {result.get('description', 'N/A')}"
             for i, result in enumerate(data["web"]["results"])
         ]
         return "\n".join(snippets)
@@ -235,8 +235,10 @@ class SearchProviderProxy:
                 return await self.client(query, **kwargs)
             else:
                 # For standard sync wrappers, run them in a thread to avoid blocking
-                if not hasattr(self.client, 'run'):
-                    raise NotImplementedError(f"Client for '{self.provider}' has no 'run' method.")
+                if not hasattr(self.client, "run"):
+                    raise NotImplementedError(
+                        f"Client for '{self.provider}' has no 'run' method."
+                    )
                 return await asyncio.to_thread(self.client.run, query, **kwargs)
 
 
@@ -251,7 +253,9 @@ async def main():
     async with httpx.AsyncClient() as http_client:
         print("--- Testing DuckDuckGo (fixed 2 req/sec limit) ---")
         try:
-            ddg_proxy = SearchProviderProxy("duckduckgo/search", rate_manager, http_client)
+            ddg_proxy = SearchProviderProxy(
+                "duckduckgo/search", rate_manager, http_client
+            )
             tasks = [
                 ddg_proxy.run("Benefits of serverless computing?"),
                 ddg_proxy.run("What is WebAssembly?"),
@@ -259,16 +263,18 @@ async def main():
             ]
             results = await asyncio.gather(*tasks)
             for i, res in enumerate(results):
-                print(f"Result {i+1}: " + res[:100] + "...")
+                print(f"Result {i + 1}: " + res[:100] + "...")
         except Exception as e:
             print(f"Error with DuckDuckGo: {e}")
 
-        print("\n" + "="*50 + "\n")
+        print("\n" + "=" * 50 + "\n")
 
         print("--- Testing Brave Search (starts with 1 req/sec, then uses headers) ---")
         if os.getenv("BRAVE_SEARCH_API_KEY"):
             try:
-                brave_proxy = SearchProviderProxy("brave/search", rate_manager, http_client)
+                brave_proxy = SearchProviderProxy(
+                    "brave/search", rate_manager, http_client
+                )
                 # These three will be spaced out by the default 1 req/sec limit
                 tasks = [
                     brave_proxy.run("What is LangGraph?"),
@@ -277,7 +283,7 @@ async def main():
                 ]
                 results = await asyncio.gather(*tasks)
                 for i, res in enumerate(results):
-                    print(f"Result {i+1}: " + res[:100] + "...")
+                    print(f"Result {i + 1}: " + res[:100] + "...")
             except Exception as e:
                 print(f"Error with Brave Search: {e}")
         else:

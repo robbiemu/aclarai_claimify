@@ -9,6 +9,7 @@ from langgraph.graph.message import add_messages
 from .models import FitnessReport
 
 class DataScoutState(TypedDict):
+    strategy_block: str
     """
     Represents the state of the Data Scout graph.
 
@@ -34,6 +35,7 @@ class DataScoutState(TypedDict):
         last_action_agent: The name of the last agent that took action.
         synthetic_budget: The maximum allowed percentage of synthetic samples (0.0-1.0).
         fitness_report: A structured report from the FitnessAgent evaluating a source document.
+        task_history: A list of (characteristic, topic, failure_reason) tuples.
     """
     messages: Annotated[list, add_messages]
     run_id: str
@@ -56,3 +58,4 @@ class DataScoutState(TypedDict):
     last_action_agent: str
     synthetic_budget: float
     fitness_report: Optional[FitnessReport]
+    task_history: List[tuple[str, str, str]]

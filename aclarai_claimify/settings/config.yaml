@@ -5,11 +5,11 @@ window:
 
 model:
   claimify:
-    selection: "gpt-4o-mini"
-    disambiguation: "gpt-4o-mini"
-    decomposition: "gpt-4o-mini"
-    default: "gpt-4o-mini"
-  fallback_plugin: "gpt-4o-mini"
+    selection: "openai/gpt-4o-mini"
+    disambiguation: "openai/gpt-4o-mini"
+    decomposition: "openai/gpt-4o-mini"
+    default: "openai/gpt-4o-mini"
+  fallback_plugin: "openai/gpt-4o-mini"
 
 processing:
   claimify:
@@ -18,7 +18,7 @@ processing:
       log_decisions: true
       log_transformations: true
       log_timing: true
-  timeout_seconds: 45
+  timeout_seconds: 600
   temperature: 0.1
   max_tokens: 1000
 
@@ -51,26 +51,26 @@ scout_agent:
   mission_plan:
     goal: "Find reliable, verifiable data sources to build a training corpus about the safety and efficacy of GLP-1 agonists for weight loss."
     nodes:
-      - name: "DeconstructGoalNode"
-        model: "ollama/gpt-oss:20b"
-        temperature: 0.1
-        max_tokens: 2048
-      - name: "PlanNode"
-        model: "ollama/gpt-oss:20b"
-        temperature: 0.1
-        max_tokens: 4096
-      - name: "WebSearchNode"
-        model: "ollama/gpt-oss:20b" # Used for generating search queries
-        temperature: 0.2
-        max_tokens: 1024
-      - name: "FitnessCheckNode"
-        model: "ollama/gpt-oss:20b" # Highest-quality model for evaluation
-        temperature: 0.0
-        max_tokens: 2048
-      - name: "ArchivingNode"
-        model: "ollama/gpt-oss:20b" # Not an LLM call, but can be configured
-        temperature: 0.0
-        max_tokens: 8192
+      - name: "supervisor"
+        model: "openai/gpt-5-mini"
+        temperature: 1
+        max_tokens: 65536
+      - name: "research"
+        model: "openai/gpt-5-mini" # Used for generating search queries
+        temperature: 1
+        max_tokens: 65536
+      - name: "fitness"
+        model: "openai/gpt-5-mini" # Highest-quality model for evaluation
+        temperature: 1
+        max_tokens: 65536
+      - name: "archive"
+        model: "openai/gpt-5-mini" # Not an LLM call, but can be configured
+        temperature: 1
+        max_tokens: 65536
+      - name: "synthetic"
+        model: "openai/gpt-5-mini"
+        temperature: 1
+        max_tokens: 65536
   writer:
     tier1_path: "examples/data/datasets/tier1"
     tier2_path: "examples/data/datasets/tier2"

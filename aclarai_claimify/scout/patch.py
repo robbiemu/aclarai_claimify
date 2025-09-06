@@ -267,7 +267,11 @@ def _direct_ollama_call_with_tools(messages, model, tools=None, temperature=0.1,
             content = message_data.get('content', '')
             tool_calls = message_data.get('tool_calls', [])
             
-            # print(f"🔍 Extracted: content='{content[:100]}...', tool_calls={tool_calls}")
+            # DEBUG: Show what we actually extracted
+            print(f"🔍 DEBUG: Direct Ollama extracted:")
+            print(f"  - content length: {len(content) if content else 0}")
+            print(f"  - content preview: '{content[:200] if content else '[EMPTY]'}{'...' if content and len(content) > 200 else ''}")
+            print(f"  - tool_calls: {len(tool_calls) if tool_calls else 0} calls")
             
             # Create AIMessage with proper tool calls
             if tool_calls:
@@ -455,12 +459,19 @@ try:
                     # Debug info (reduced verbosity)
                     # print(f"🔍 Checking Ollama response: has_tools={bool(has_tools)}, content={bool(message.content)}, has_tool_calls_attr={has_tool_calls_attr}, tool_calls_empty={tool_calls_empty}")
                     
-                    if (has_tools and 
-                        hasattr(message, 'content') and 
-                        not message.content and 
-                        tool_calls_empty):
-                        
-                        # This looks like Ollama returned tool calls but LiteLLM didn't preserve them
+                    # Check for lost tool calls OR lost content (both indicate LiteLLM parsing issues)
+                    content_missing = not message.content
+                    
+                    # Detect suspicious responses:
+                    # 1. When tools are expected but missing OR content is missing with tools
+                    # 2. When content is missing even without tools (final iteration case)
+                    suspicious_response = (
+                        (has_tools and (tool_calls_empty or content_missing)) or  # Original condition
+                        (content_missing)  # Also trigger if content is missing, regardless of tools
+                    )
+                    
+                    if suspicious_response:
+                        # This looks like Ollama returned content/tool calls but LiteLLM didn't preserve them
                         # Let's make a direct call to get the proper response
                         print(f"🔧 LiteLLM lost tool calls for {model}, making direct Ollama call...")
                         
@@ -485,29 +496,60 @@ try:
                             timeout=timeout
                         )
                         
+                        # Always preserve content from direct call, regardless of tool calls
+                        message.content = direct_result.content or ''
+                        
                         if hasattr(direct_result, 'tool_calls') and direct_result.tool_calls:
                             # Convert the direct result back to LiteLLM format
                             import litellm.types.utils as litellm_utils
                             from litellm.types.utils import ModelResponse, Choices, Message
                             
-                            # Create proper LiteLLM tool calls format
+                            # DEBUG: Show what tool calls we're trying to restore
+                            print(f"🔧 DEBUG: Attempting to restore {len(direct_result.tool_calls)} tool calls:")
+                            for i, tc in enumerate(direct_result.tool_calls):
+                                print(f"  [{i}] name='{tc.get('name', 'MISSING')}', args='{tc.get('args', 'MISSING')}', id='{tc.get('id', 'MISSING')}'")
+                            
+                            # Create proper LiteLLM tool calls format, but validate them first
                             litellm_tool_calls = []
+                            valid_tool_calls = []
+                            invalid_content_parts = []
+                            
                             for tc in direct_result.tool_calls:
-                                litellm_tc = {
-                                    'id': tc.get('id', f"call_{len(litellm_tool_calls)}"),
-                                    'type': 'function',
-                                    'function': {
-                                        'name': tc['name'],
-                                        'arguments': json.dumps(tc['args']) if isinstance(tc['args'], dict) else str(tc['args'])
+                                tool_name = tc.get('name', '')
+                                tool_args = tc.get('args', {})
+                                
+                                # Validate tool call - must have non-empty name and valid args
+                                if tool_name and tool_name.strip():
+                                    litellm_tc = {
+                                        'id': tc.get('id', f"call_{len(litellm_tool_calls)}"),
+                                        'type': 'function',
+                                        'function': {
+                                            'name': tool_name,
+                                            'arguments': json.dumps(tool_args) if isinstance(tool_args, dict) else str(tool_args)
+                                        }
                                     }
-                                }
-                                litellm_tool_calls.append(litellm_tc)
+                                    litellm_tool_calls.append(litellm_tc)
+                                    valid_tool_calls.append(tc)
+                                    print(f"  ✅ Valid tool call: {tool_name}")
+                                else:
+                                    # Invalid tool call - treat as content
+                                    invalid_part = f"<Attempted tool call: name='{tool_name}', args='{tool_args}'>"
+                                    invalid_content_parts.append(invalid_part)
+                                    print(f"  ❌ Invalid tool call (empty name): treating as content")
                             
-                            # Update the response with proper tool calls
-                            message.tool_calls = litellm_tool_calls
-                            message.content = direct_result.content or ''
+                            if litellm_tool_calls:
+                                # Update the response with valid tool calls
+                                message.tool_calls = litellm_tool_calls
+                                print(f"✅ Restored {len(litellm_tool_calls)} valid tool calls to LiteLLM response")
                             
-                            print(f"✅ Restored {len(litellm_tool_calls)} tool calls to LiteLLM response")
+                            # If we had invalid tool calls, append them to content
+                            if invalid_content_parts:
+                                current_content = message.content or ''
+                                additional_content = "\n".join(invalid_content_parts)
+                                message.content = f"{current_content}\n{additional_content}" if current_content else additional_content
+                                print(f"📝 Added {len(invalid_content_parts)} invalid tool calls as content")
+                        else:
+                            print(f"✅ Restored content from direct Ollama call (no tool calls)")
             
             return response
             
