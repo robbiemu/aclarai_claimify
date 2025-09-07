@@ -178,7 +178,13 @@ def _validate_url_batch(results_batch: List[Dict[str, Any]], tool_name: str) -> 
     
     for result in results_batch:
         if isinstance(result, dict):
-            url = result.get("url")
+            # Look for URL field - try common field names
+            url = None
+            for url_field in ["url", "link"]:
+                if url_field in result:
+                    url = result[url_field]
+                    break
+            
             if url:
                 try:
                     # Test if the URL is accessible with a HEAD request first (more efficient)
@@ -214,10 +220,19 @@ def _validate_url_batch(results_batch: List[Dict[str, Any]], tool_name: str) -> 
                         result_copy["error"] = f"{type(e2).__name__}: {str(e2)}"
                         validated_results.append(result_copy)
             else:
-                # Non-URL results are passed through as accessible
-                result_copy = result.copy()
-                result_copy["status"] = "accessible"
-                validated_results.append(result_copy)
+                # No URL field found - check if this might be a non-URL result
+                # Look for common fields that indicate this is a valid result without a URL
+                has_content_fields = any(field in result for field in ["title", "snippet", "description", "content"])
+                if has_content_fields:
+                    # This appears to be a valid result without a URL (e.g., Wikipedia summary)
+                    result_copy = result.copy()
+                    result_copy["status"] = "accessible"
+                    validated_results.append(result_copy)
+                else:
+                    # Non-URL results are passed through as accessible
+                    result_copy = result.copy()
+                    result_copy["status"] = "accessible"
+                    validated_results.append(result_copy)
         else:
             # Non-dict results are passed through as accessible
             validated_results.append({"content": result, "status": "accessible"})

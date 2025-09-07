@@ -169,9 +169,7 @@ class SearchProviderProxy:
 
         # Mapping for standard LangChain wrappers
         provider_map = {
-            "google/search": GoogleSearchAPIWrapper,
             "tavily/search": TavilySearch,
-            "duckduckgo/search": DuckDuckGoSearchRun,
             "bing/search": BingSearchAPIWrapper,
             "serpapi/search": SerpAPIWrapper,
             "you/search": YouSearchAPIWrapper,
@@ -179,6 +177,20 @@ class SearchProviderProxy:
             "wikipedia/search": WikipediaAPIWrapper,
             "arxiv/search": ArxivAPIWrapper,
         }
+        
+        # Special handling for providers that need additional configuration
+        if self.provider == "google/search":
+            # Google Search needs API key and CSE ID
+            api_key = os.getenv("GOOGLE_SEARCH_API_KEY")
+            cse_id = os.getenv("CSE_ID")
+            if not api_key:
+                raise ValueError("GOOGLE_SEARCH_API_KEY environment variable not set for Google Search provider")
+            if not cse_id:
+                raise ValueError("CSE_ID environment variable not set for Google Search provider")
+            return GoogleSearchAPIWrapper(google_api_key=api_key, google_cse_id=cse_id), False
+        elif self.provider == "duckduckgo/search":
+            return DuckDuckGoSearchRun(), False
+
         if self.provider in provider_map:
             client_class = provider_map[self.provider]
             return client_class(), False
@@ -207,11 +219,8 @@ class SearchProviderProxy:
         if not data.get("web") or not data["web"].get("results"):
             return "No good search results found."
 
-        snippets = [
-            f"Snippet {i + 1}: {result.get('description', 'N/A')}"
-            for i, result in enumerate(data["web"]["results"])
-        ]
-        return "\n".join(snippets)
+        # Return the original results format - let the validation handle normalization
+        return data["web"]["results"]
 
     async def run(self, query: str, **kwargs: Any) -> str:
         """
