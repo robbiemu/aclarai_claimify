@@ -272,3 +272,63 @@ def _safe_request_head(url: str, timeout_s: int = 15, max_retries: int = 2) -> h
         raise last_exc
     else:
         raise Exception("HEAD request failed for unknown reasons")
+
+
+def get_mission_details_from_file(
+    mission_plan_path: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Lightweight parser for scout_mission.yaml to get mission names and target sizes
+    without instantiating a MissionRunner.
+
+    Args:
+        mission_plan_path: Path to the scout_mission.yaml file.
+
+    Returns:
+        A dictionary containing mission names and their calculated total samples,
+        or None if the file cannot be read.
+        Structure:
+        {
+            "mission_names": ["mission1", "mission2"],
+            "mission_targets": {
+                "mission1": 100,
+                "mission2": 200
+            }
+        }
+    """
+    try:
+        with open(mission_plan_path, "r") as f:
+            content = f.read()
+            # Remove comment header if it exists
+            if content.startswith("#"):
+                first_newline = content.find("\n")
+                if first_newline != -1:
+                    content = content[first_newline + 1 :]
+            
+            mission_plan = yaml.safe_load(content)
+            if not mission_plan or "missions" not in mission_plan:
+                return None
+
+            mission_names = []
+            mission_targets = {}
+            
+            for mission in mission_plan.get("missions", []):
+                name = mission.get("name")
+                if not name:
+                    continue
+                
+                mission_names.append(name)
+                
+                # Calculate total samples for this mission
+                target_size = mission.get("target_size", 0)
+                goals = mission.get("goals", [])
+                total_samples = target_size * len(goals)
+                mission_targets[name] = total_samples
+                
+            return {
+                "mission_names": mission_names,
+                "mission_targets": mission_targets
+            }
+
+    except (FileNotFoundError, yaml.YAMLError):
+        return None

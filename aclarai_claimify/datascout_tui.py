@@ -263,7 +263,6 @@ class DataScoutTUI(App):
 
     def __init__(
         self,
-        # ADD initial_prompt to __init__
         initial_prompt: str,
         mission_path: str = "settings/scout_mission.yaml",
         stub: bool = False,
@@ -272,7 +271,6 @@ class DataScoutTUI(App):
         mission_name: str = "",
         total_samples_target: int = 1200,
         resume_from: Optional[str] = None,
-        checkpoint_db_path: Optional[str] = None,
     ):
         super().__init__()
         # STORE the prompt
@@ -287,7 +285,6 @@ class DataScoutTUI(App):
         self.recursion_limit = recursion_limit
         self.mission_name = mission_name
         self.resume_from = resume_from
-        self.checkpoint_db_path = checkpoint_db_path
 
         # Components
         self.stats_header = None
@@ -473,8 +470,6 @@ class DataScoutTUI(App):
             ]
             if self.resume_from:
                 command.extend(["--resume-from", self.resume_from])
-            if self.checkpoint_db_path:
-                command.extend(["--checkpoint-db", self.checkpoint_db_path])
 
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -974,18 +969,24 @@ class DataScoutLauncher(App):
         self.target = target
         self.available_missions = []
         self.chosen_mission = None
+        self.chosen_mission_target = None
 
     def on_mount(self):
         """Load missions and show selector when app starts."""
         # Import get_mission_names silently
         with _redirect_stdout_to_file(self.log_file):
-            from aclarai_claimify.scout.main import get_mission_names
+            from aclarai_claimify.scout.scout_utils import (
+                get_mission_details_from_file,
+            )
 
-            self.available_missions = get_mission_names(self.mission_plan_path)
+            mission_details = get_mission_details_from_file(self.mission_plan_path)
 
-        if not self.available_missions:
+        if not mission_details or not mission_details["mission_names"]:
             self.exit(message=f"❌ No missions found in {self.mission_plan_path}")
             return
+
+        self.available_missions = mission_details["mission_names"]
+        self.mission_targets = mission_details["mission_targets"]
 
         # Show mission selector modal
         self.push_screen(
@@ -999,6 +1000,7 @@ class DataScoutLauncher(App):
             return
 
         self.chosen_mission = mission_name
+        self.chosen_mission_target = self.mission_targets.get(mission_name, 1200)
 
         # Exit this launcher and start the main TUI
         self.exit()
@@ -1018,11 +1020,6 @@ def generate(
     ),
     resume_from: Optional[str] = typer.Option(
         None, "--resume-from", help="The thread ID to resume from."
-    ),
-    checkpoint_db_path: str = typer.Option(
-        "checkpoints/mission_checkpoints.db",
-        "--checkpoint-db",
-        help="Path to the checkpoint database.",
     ),
 ):
     """Start the Data Scout Agent TUI for sample generation."""
@@ -1052,14 +1049,20 @@ def generate(
     os.makedirs("examples/data/datasets/tier2", exist_ok=True)
     os.makedirs("examples", exist_ok=True)
 
-    # Step 1: Launch mission selector TUI
-    launcher = DataScoutLauncher(mission_plan_path, stub, log, target)
-    launcher.run()
+    # Step 1: Launch mission selector TUI (skip in stub mode)
+    if not stub:
+        launcher = DataScoutLauncher(mission_plan_path, stub, log, target)
+        launcher.run()
 
-    chosen_mission_name = launcher.chosen_mission
-    if not chosen_mission_name:
-        typer.echo("❌ No mission selected.", err=True)
-        raise typer.Exit(1)
+        chosen_mission_name = launcher.chosen_mission
+        total_samples_target = launcher.chosen_mission_target
+        if not chosen_mission_name:
+            typer.echo("❌ No mission selected.", err=True)
+            raise typer.Exit(1)
+    else:
+        # In stub mode, use a default mission name
+        chosen_mission_name = "research_dataset"  # or whatever default makes sense for stub
+        total_samples_target = 1200
 
     # Step 2: Load configuration and setup (with silent patches)
     with _redirect_stdout_to_file(log):
@@ -1068,12 +1071,6 @@ def generate(
 
         # Load configuration
         config = load_claimify_config()
-
-        # Load mission plan info with the specific mission name
-        from aclarai_claimify.scout.main import load_mission_plan
-
-        mission_plan_info = load_mission_plan(mission_plan_path, chosen_mission_name)
-        total_samples_target = mission_plan_info["total_samples_target"]
 
         # Calculate recursion limit
         STEPS_PER_SAMPLE = 4
@@ -1102,7 +1099,6 @@ def generate(
         mission_name=chosen_mission_name,
         total_samples_target=total_samples_target,
         resume_from=resume_from,
-        checkpoint_db_path=checkpoint_db_path,
     )
     app.run()
 

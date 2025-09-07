@@ -9,27 +9,28 @@ import uuid
 from typing import Dict, Any, Optional, List
 import yaml
 import sqlite3
-from contextlib import closing
 
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .graph import build_graph
-from .checkpoint_db import create_connection, create_table
 
 
 class MissionRunner:
     """A high-level orchestrator for Data Scout missions with checkpointing support."""
 
-    def __init__(self, mission_plan_path: str = "settings/scout_mission.yaml"):
+    def __init__(
+        self,
+        checkpointer: SqliteSaver,
+        app,
+        mission_plan_path: str = "settings/scout_mission.yaml",
+    ):
         """Initialize the MissionRunner with the mission plan."""
         self.mission_plan_path = mission_plan_path
         self.mission_plan = self._load_mission_plan()
         self.checkpoint_db_path = "checkpoints/mission_checkpoints.db"
-
-        # --- FIX: Instantiate a persistent checkpointer and the graph ---
-        self.checkpointer = SqliteSaver.from_conn_string(self.checkpoint_db_path)
-        self.app = build_graph(checkpointer=self.checkpointer)
+        self.checkpointer = checkpointer
+        self.app = app
 
     def _load_mission_plan(self) -> Dict[str, Any]:
         """Load and parse the mission plan YAML file."""
@@ -39,7 +40,7 @@ class MissionRunner:
                 if content.startswith("#"):
                     first_newline = content.find("\n")
                     if first_newline != -1:
-                        content = content[first_newline + 1:]
+                        content = content[first_newline + 1 :]
                 return yaml.safe_load(content)
         except Exception as e:
             print(f"Error loading mission plan: {e}")
@@ -73,24 +74,24 @@ class MissionRunner:
     def start_new_mission(self, mission_name: str, recursion_limit: int = 1000) -> str:
         """
         Start a new mission with a fresh thread ID.
-        
+
         Args:
             mission_name: Name of the mission to run
             recursion_limit: Maximum recursion limit for the graph
-            
+
         Returns:
             Thread ID for the new mission
         """
         thread_id = str(uuid.uuid4())
         print(f"🤖 Starting new mission '{mission_name}' with thread ID: {thread_id}")
-        
+
         # Get mission details
         mission = self.get_mission_by_name(mission_name)
         total_samples_target = self.calculate_total_samples(mission_name)
-        
+
         # Initialize state
         synthetic_budget = mission.get("synthetic_budget", 0.2) if mission else 0.2
-        
+
         initial_state = {
             "run_id": thread_id,
             "messages": [],
@@ -111,25 +112,25 @@ class MissionRunner:
             "last_action_agent": "",
             "synthetic_budget": synthetic_budget,
         }
-        
+
         # --- FIX: Save initial state using the app's checkpointer ---
         thread_config = {"configurable": {"thread_id": thread_id}}
         self.app.update_state(thread_config, initial_state)
-        
+
         return thread_id
 
     def resume_mission(self, thread_id: str, recursion_limit: int = 1000) -> bool:
         """
         Resume a mission from a checkpoint.
-        
+
         Args:
             thread_id: Thread ID of the mission to resume
-            
+
         Returns:
             True if mission was successfully resumed, False otherwise
         """
         print(f"🔄 Resuming mission with thread ID: {thread_id}")
-        
+
         # --- FIX: Check for checkpoint existence using the checkpointer ---
         thread_config = {"configurable": {"thread_id": thread_id}}
         checkpoint = self.checkpointer.get(thread_config)
@@ -141,15 +142,17 @@ class MissionRunner:
         print("   -> Found existing checkpoint. Mission can be resumed.")
         return True
 
-    def run_mission_step(self, thread_id: str, user_input: str, recursion_limit: int = 1000) -> Dict[str, Any]:
+    def run_mission_step(
+        self, thread_id: str, user_input: str, recursion_limit: int = 1000
+    ) -> Dict[str, Any]:
         """
         Run a single step of the mission.
-        
+
         Args:
             thread_id: Thread ID of the mission
             user_input: User input for this step
             recursion_limit: Maximum recursion limit for the graph
-            
+
         Returns:
             Dictionary with results of the step execution
         """
@@ -157,18 +160,15 @@ class MissionRunner:
         thread_config = {
             "configurable": {"thread_id": thread_id, "recursion_limit": recursion_limit}
         }
-        
+
         # Prepare inputs
         inputs = {"messages": [HumanMessage(content=user_input)]}
-        
+
         # Run the graph - the checkpointer will handle state loading and saving automatically
         results = []
         for event in self.app.stream(inputs, config=thread_config):
             for node_name, node_output in event.items():
-                results.append({
-                    "node_name": node_name,
-                    "node_output": node_output
-                })
+                results.append({"node_name": node_name, "node_output": node_output})
 
                 if node_name == "__end__":
                     print("🏁 Agent has finished the task.")
@@ -176,24 +176,21 @@ class MissionRunner:
         # Get the latest state from the checkpointer
         current_state = self.app.get_state(thread_config).values
 
-        return {
-            "results": results,
-            "current_state": current_state
-        }
+        return {"results": results, "current_state": current_state}
 
     def get_progress(self, thread_id: str) -> Dict[str, Any]:
         """
         Get the current progress of a mission.
-        
+
         Args:
             thread_id: Thread ID of the mission
-            
+
         Returns:
             Dictionary with progress information
         """
         # --- FIX: Load state directly from the checkpointer ---
         thread_config = {"configurable": {"thread_id": thread_id}}
-        state = self.checkpointer.get(thread_config)
+        state = self.app.get_state(thread_config)
 
         if state:
             try:
@@ -206,14 +203,12 @@ class MissionRunner:
                 return {
                     "samples_generated": samples_generated,
                     "total_target": total_target,
-                    "progress_pct": (samples_generated / total_target) * 100 if total_target > 0 else 0
+                    "progress_pct": (samples_generated / total_target) * 100
+                    if total_target > 0
+                    else 0,
                 }
             except Exception as e:
                 print(f"Error getting progress from checkpoint: {e}")
-        
+
         # Default values if no state found
-        return {
-            "samples_generated": 0,
-            "total_target": 0,
-            "progress_pct": 0
-        }
+        return {"samples_generated": 0, "total_target": 0, "progress_pct": 0}
