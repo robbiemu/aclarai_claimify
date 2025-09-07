@@ -51,7 +51,7 @@ def test_scout_agent_config_validation():
     # Check mission_plan
     mission_plan = scout_agent.mission_plan
     assert mission_plan.goal is not None and len(mission_plan.goal) > 0
-    assert mission_plan.max_iterations >= 1
+    assert scout_agent.nodes.research.max_iterations >= 1
     assert len(mission_plan.nodes) > 0
     
     # Check nodes
@@ -82,12 +82,12 @@ def test_scout_agent_config_loading():
     # Check mission_plan
     mission_plan = config.scout_agent.mission_plan
     assert mission_plan.goal is not None
-    assert isinstance(mission_plan.max_iterations, int)
+    assert isinstance(config.scout_agent.nodes.research.max_iterations, int)
     assert len(mission_plan.nodes) > 0
     
     # Check that we have the expected nodes
     node_names = [node.name for node in mission_plan.nodes]
-    expected_nodes = ["DeconstructGoalNode", "PlanNode", "WebSearchNode", "FitnessCheckNode", "ArchivingNode"]
+    expected_nodes = ["supervisor", "research", "archive", "fitness", "synthetic"]
     for expected_node in expected_nodes:
         assert expected_node in node_names, f"Expected node {expected_node} not found in {node_names}"
 
@@ -97,7 +97,7 @@ def test_scout_agent_node_config_access():
     from aclarai_claimify.scout.nodes import get_node_config
     
     # Test that we can get each node configuration
-    node_names = ["DeconstructGoalNode", "PlanNode", "WebSearchNode", "FitnessCheckNode", "ArchivingNode"]
+    node_names = ["supervisor", "research", "archive", "fitness", "synthetic"]
     for node_name in node_names:
         node_config = get_node_config(node_name)
         assert node_config is not None, f"Could not get config for node {node_name}"
@@ -114,7 +114,6 @@ def test_scout_agent_config_zero_max_tokens_validation():
         "scout_agent": {
             "mission_plan": {
                 "goal": "Test goal",
-                "max_iterations": 5,
                 "nodes": [
                     {
                         "name": "TestNode",
@@ -149,7 +148,6 @@ def test_scout_agent_config_missing_field_validation():
         "scout_agent": {
             # Missing mission_plan.goal
             "mission_plan": {
-                "max_iterations": 5,
                 "nodes": []
             },
             "writer": {

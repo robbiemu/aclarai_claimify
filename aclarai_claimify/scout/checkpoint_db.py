@@ -25,19 +25,3 @@ def create_table(conn: sqlite3.Connection):
     except sqlite3.Error as e:
         print(e)
 
-def save_mission_state(conn: sqlite3.Connection, thread_id: str, mission_state: str):
-    """Save the mission state for a given thread ID."""
-    sql = ''' INSERT OR REPLACE INTO missions(thread_id, mission_state)
-              VALUES(?,?) '''
-    cur = conn.cursor()
-    cur.execute(sql, (thread_id, mission_state))
-    conn.commit()
-
-def load_mission_state(conn: sqlite3.Connection, thread_id: str) -> Optional[str]:
-    """Load the mission state for a given thread ID."""
-    cur = conn.cursor()
-    cur.execute("SELECT mission_state FROM missions WHERE thread_id=?", (thread_id,))
-    rows = cur.fetchall()
-    if rows:
-        return rows[0][0]
-    return None
