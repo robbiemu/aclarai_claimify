@@ -19,7 +19,7 @@ def test_scout_agent_main_function_startup():
     
     # Check that all required fields are present
     assert len(config.scout_agent.mission_plan.goal) > 0
-    assert config.scout_agent.mission_plan.max_iterations >= 1
+    assert config.scout_agent.nodes.research.max_iterations >= 1
     assert len(config.scout_agent.mission_plan.nodes) > 0
     
     # Check that the checkpointer path is set

@@ -20,7 +20,6 @@ from langchain_core.messages import HumanMessage
 from .graph import build_graph
 from .tools import _HAVE_LIBCRAWLER
 from ..config import load_claimify_config
-from . import checkpoint_db
 from .mission_runner import MissionRunner
 
 
@@ -117,11 +116,6 @@ def run(
     resume_from: Optional[str] = typer.Option(
         None, "--resume-from", help="The thread ID to resume from."
     ),
-    checkpoint_db_path: str = typer.Option(
-        "checkpoints/mission_checkpoints.db",
-        "--checkpoint-db",
-        help="Path to the checkpoint database.",
-    ),
 ):
     """Main function to run the CLI interactive loop for the scout agent."""
     config = load_claimify_config()
@@ -177,20 +171,12 @@ def run(
     sys.stdout.flush()
     # --- END: Dynamic Recursion Limit Calculation ---
 
-    # Setup checkpointing
-    conn = checkpoint_db.create_connection(checkpoint_db_path)
-    if conn is None:
-        print(f"❌ Error: Could not create or connect to the database at {checkpoint_db_path}")
-        return
-    checkpoint_db.create_table(conn)
-
     # Start or resume mission
     if resume_from:
         thread_id = resume_from
         success = mission_runner.resume_mission(thread_id, recursion_limit)
         if not success:
             print(f"❌ Error: Could not resume mission with thread ID: {thread_id}")
-            conn.close()
             return
         print(f"🔄 Resuming mission from thread: {thread_id}")
     else:
@@ -314,9 +300,6 @@ def run(
             print(f"Traceback: {traceback.format_exc()}")
             print("Please try again.")
     
-    if conn:
-        conn.close()
-
 
 
 # Create the CLI app that will be used by the entry point

@@ -11,248 +11,203 @@ from aclarai_claimify.scout.state import DataScoutState
 
 class TestNodes:
     """Test suite for the Data Scout Agent nodes."""
-    
-    def create_test_state(self):
-        """Create a test state object."""
-        return {
+
+    def create_test_state(self, **kwargs):
+        """Create a default test state, allowing overrides."""
+        state = {
             "messages": [],
-            "task_queue": [],
+            "progress": {},
+            "current_task": None,
             "research_findings": [],
             "pedigree_path": "test_pedigree.md",
             "decision_history": [],
             "tool_execution_failures": 0,
             "research_attempts": 0,
             "samples_generated": 0,
-            "total_samples_target": 1200,
+            "total_samples_target": 10,
             "current_mission": "test_mission",
+            "synthetic_samples_generated": 0,
+            "research_samples_generated": 0,
             "consecutive_failures": 0,
             "last_action_status": "success",
-            "last_action_agent": ""
+            "last_action_agent": "",
+            "synthetic_budget": 0.2,
         }
-    
-    @patch('aclarai_claimify.scout.nodes.load_claimify_config')
-    @patch('aclarai_claimify.scout.nodes.ChatLiteLLM')
-    def test_supervisor_node_research_decision(self, mock_chat_llm, mock_load_config):
-        """Test supervisor node making a research decision."""
+        state.update(kwargs)
+        return state
+
+    @patch("aclarai_claimify.scout.nodes._get_next_task_from_progress")
+    @patch("aclarai_claimify.scout.nodes.load_claimify_config")
+    @patch("aclarai_claimify.scout.nodes.ChatLiteLLM")
+    def test_supervisor_node_research_decision(
+        self, mock_chat_llm, mock_load_config, mock_get_next_task
+    ):
+        """Test supervisor node making a research decision when a task is available."""
         # Mock config and LLM
         mock_config = MagicMock()
-        mock_config.temperature = 0.1
-        mock_config.max_tokens = 2000
-        mock_config.scout_agent = None
+        mock_config.scout_agent.mission_plan.get_node_config.return_value = None
         mock_load_config.return_value = mock_config
-        
-        mock_llm_instance = MagicMock()
-        mock_llm_instance.model = "ollama/gpt-oss:20b"
-        mock_chat_llm.return_value = mock_llm_instance
-        
-        # Mock structured output
-        mock_structured_llm = MagicMock()
+        mock_chat_llm.return_value = MagicMock()
+
+        # Mock the progress tracker to return a task
+        mock_get_next_task.return_value = {
+            "characteristic": "Verifiability",
+            "topic": "AI",
+        }
+
+        # Mock the supervisor's LLM to make a predictable decision
         mock_decision = MagicMock()
         mock_decision.next_agent = "research"
-        mock_structured_llm.invoke.return_value = mock_decision
-        mock_llm_instance.with_structured_output.return_value = mock_structured_llm
+        mock_decision.new_task = None
+        mock_chat_llm.return_value.invoke.return_value.content = '{"next_agent": "research"}'
         
-        # Create test state
-        state = self.create_test_state()
+        # Create an empty state, so the supervisor has to find a new task
+        state = self.create_test_state(current_task=None, progress={"test_mission": {}})
         
         # Call the node
         result = supervisor_node(state)
-        
+
         # Verify the result
         assert result["next_agent"] == "research"
-        assert "research" in result["decision_history"]
-        assert result["tool_execution_failures"] == 0
-    
-    @patch('aclarai_claimify.scout.nodes.load_claimify_config')
-    @patch('aclarai_claimify.scout.nodes.ChatLiteLLM')
-    def test_supervisor_node_synthetic_fallback(self, mock_chat_llm, mock_load_config):
-        """Test supervisor node falling back to synthetic agent after failures."""
+        assert result["current_task"] is not None
+        assert result["current_task"]["topic"] == "AI"
+
+    @patch("aclarai_claimify.scout.nodes._get_next_task_from_progress")
+    @patch("aclarai_claimify.scout.nodes.load_claimify_config")
+    @patch("aclarai_claimify.scout.nodes.ChatLiteLLM")
+    def test_supervisor_node_end_decision(
+        self, mock_chat_llm, mock_load_config, mock_get_next_task
+    ):
+        """Test supervisor deciding to end when no tasks are left."""
         # Mock config and LLM
-        mock_config = MagicMock()
-        mock_config.temperature = 0.1
-        mock_config.max_tokens = 2000
-        mock_config.scout_agent = None
-        mock_load_config.return_value = mock_config
+        mock_load_config.return_value = MagicMock()
+        mock_chat_llm.return_value = MagicMock()
+
+        # Mock the progress tracker to return no tasks
+        mock_get_next_task.return_value = None
         
-        mock_llm_instance = MagicMock()
-        mock_llm_instance.model = "ollama/gpt-oss:20b"
-        mock_chat_llm.return_value = mock_llm_instance
-        
-        # Mock structured output
-        mock_structured_llm = MagicMock()
-        mock_decision = MagicMock()
-        mock_decision.next_agent = "synthetic"
-        mock_structured_llm.invoke.return_value = mock_decision
-        mock_llm_instance.with_structured_output.return_value = mock_structured_llm
-        
-        # Create test state with failures
-        state = self.create_test_state()
-        state["consecutive_failures"] = 3  # Trigger synthetic fallback
+        # Create an empty state
+        state = self.create_test_state(current_task=None, progress={"test_mission": {}})
         
         # Call the node
         result = supervisor_node(state)
         
         # Verify the result
-        assert result["next_agent"] == "synthetic"
-        assert "synthetic" in result["decision_history"]
+        assert result["next_agent"] == "end"
     
     @patch('aclarai_claimify.scout.nodes.load_claimify_config')
     @patch('aclarai_claimify.scout.nodes.ChatLiteLLM')
     @patch('aclarai_claimify.scout.nodes.get_tools_for_role')
     def test_research_node_success(self, mock_get_tools, mock_chat_llm, mock_load_config):
         """Test research node successful operation."""
+        from langchain_core.messages import HumanMessage, AIMessage
+        from aclarai_claimify.data_models import ScoutAgentConfig, ScoutAgentMissionPlanNodeConfig, ScoutAgentNodesConfig, ScoutAgentResearchNodeConfig
+
         # Mock config and LLM
         mock_config = MagicMock()
-        mock_config.temperature = 0.1
-        mock_config.max_tokens = 2000
-        mock_config.scout_agent = None
+        mock_node_config = ScoutAgentMissionPlanNodeConfig(name="research", model="test-model", temperature=0.1, max_tokens=100)
+        mock_research_config = ScoutAgentResearchNodeConfig(max_iterations=3)
+        mock_config.scout_agent = ScoutAgentConfig(
+            mission_plan=MagicMock(),
+            nodes=ScoutAgentNodesConfig(research=mock_research_config)
+        )
+        mock_config.scout_agent.mission_plan.get_node_config.return_value = mock_node_config
         mock_load_config.return_value = mock_config
         
         mock_llm_instance = MagicMock()
-        mock_llm_instance.model = "ollama/gpt-oss:20b"
         mock_chat_llm.return_value = mock_llm_instance
-        
-        # Mock tools
         mock_get_tools.return_value = []
         
-        # Create test state with a user message
-        state = self.create_test_state()
-        from langchain_core.messages import HumanMessage
-        state["messages"] = [HumanMessage(content="Find information about LangGraph")]
+        state = self.create_test_state(messages=[HumanMessage(content="Find info on X")])
         
-        # Mock LLM response
-        mock_response = MagicMock()
-        mock_response.content = "Here is information about LangGraph..."
-        mock_response.tool_calls = []
-        mock_llm_instance.bind_tools.return_value = mock_llm_instance
-        mock_llm_instance.invoke.return_value = mock_response
+        # Mock LLM to return a final report immediately
+        final_report = AIMessage(content="# Data Prospecting Report\nSuccess")
+        mock_llm_instance.invoke.return_value = final_report
         
-        # Call the node
         result = research_node(state)
         
-        # Verify the result
         assert "messages" in result
         assert len(result["messages"]) == 1
-        assert "LangGraph" in result["messages"][0].content
-    
+        assert result["messages"][0].content == "# Data Prospecting Report\nSuccess"
+        assert "research_session_cache" in result
+
     @patch('aclarai_claimify.scout.nodes.load_claimify_config')
     @patch('aclarai_claimify.scout.nodes.ChatLiteLLM')
     def test_fitness_node_evaluation(self, mock_chat_llm, mock_load_config):
         """Test fitness node evaluation."""
+        from langchain_core.messages import AIMessage
         # Mock config and LLM
-        mock_config = MagicMock()
-        mock_config.temperature = 0.1
-        mock_config.max_tokens = 2000
-        mock_config.scout_agent = None
-        mock_load_config.return_value = mock_config
-        
+        mock_load_config.return_value = MagicMock()
         mock_llm_instance = MagicMock()
-        mock_llm_instance.model = "ollama/gpt-oss:20b"
         mock_chat_llm.return_value = mock_llm_instance
         
-        # Mock LLM response
-        mock_response = MagicMock()
-        mock_response.content = "The research findings are good and meet the criteria."
-        mock_llm_instance.invoke.return_value = mock_response
+        # Mock LLM to return a valid JSON for a passing report
+        mock_llm_instance.invoke.return_value = AIMessage(
+            content='{"passed": true, "reason": "The document is well-structured."}'
+        )
         
-        # Create test state
-        state = self.create_test_state()
+        state = self.create_test_state(research_findings=["Some great content."])
         
-        # Call the node
         result = fitness_node(state)
         
-        # Verify the result
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert "research findings" in result["messages"][0].content
-    
+        assert "fitness_report" in result
+        assert result["fitness_report"].passed is True
+        assert "well-structured" in result["fitness_report"].reason
+
     @patch('aclarai_claimify.scout.nodes.load_claimify_config')
     @patch('aclarai_claimify.scout.nodes.ChatLiteLLM')
     def test_synthetic_node_generation(self, mock_chat_llm, mock_load_config):
         """Test synthetic node generation."""
+        from langchain_core.messages import AIMessage
         # Mock config and LLM
-        mock_config = MagicMock()
-        mock_config.temperature = 0.1
-        mock_config.max_tokens = 2000
-        mock_config.scout_agent = None
-        mock_load_config.return_value = mock_config
-        
+        mock_load_config.return_value = MagicMock()
         mock_llm_instance = MagicMock()
-        mock_llm_instance.model = "ollama/gpt-oss:20b"
         mock_chat_llm.return_value = mock_llm_instance
         
-        # Mock LLM response
-        mock_response = MagicMock()
-        mock_response.content = "Generating synthetic examples..."
-        mock_response.tool_calls = []
-        mock_llm_instance.bind_tools.return_value = mock_llm_instance
+        # Mock LLM to return a report
+        mock_response = AIMessage(content="# Data Prospecting Report\nThis is a synthetic document.")
         mock_llm_instance.invoke.return_value = mock_response
         
-        # Create test state
         state = self.create_test_state()
         
-        # Call the node
         result = synthetic_node(state)
         
-        # Verify the result
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert "synthetic" in result["messages"][0].content
+        assert "research_findings" in result
+        assert len(result["research_findings"]) == 1
+        assert "synthetic document" in result["research_findings"][0]
+        assert result["current_sample_provenance"] == "synthetic"
 
     @patch('aclarai_claimify.scout.nodes.load_claimify_config')
     @patch('aclarai_claimify.scout.nodes.create_llm')
-    @patch('aclarai_claimify.scout.nodes._get_next_research_task')
     @patch('aclarai_claimify.scout.nodes.write_file')
     @patch('aclarai_claimify.scout.nodes.append_to_pedigree')
     @patch('time.strftime')
-    def test_archive_node_filepath_generation(self, mock_strftime, mock_append_to_pedigree, mock_write_file, mock_get_next_research_task, mock_create_llm, mock_load_claimify_config):
+    def test_archive_node_filepath_generation(self, mock_strftime, mock_append_to_pedigree, mock_write_file, mock_create_llm, mock_load_config):
         """Test that the archive_node generates a deterministic filepath."""
         # Arrange
-        # Mock configs and LLMs
-        mock_load_claimify_config.return_value = MagicMock()
-        mock_create_llm.return_value = MagicMock()
+        mock_load_config.return_value = MagicMock()
+        mock_llm = MagicMock()
+        mock_create_llm.return_value = mock_llm
+        mock_llm.invoke.return_value.content = "### 2025-09-04 — Sample Archived..."
 
-        # Mock the LLM response to only return the markdown
-        mock_llm_result = MagicMock()
-        mock_llm_result.content = '{"entry_markdown": "### 2025-09-04 — Sample Archived..."}'
-        mock_create_llm.return_value.invoke.return_value = mock_llm_result
-
-        # Mock the task queue to provide characteristic and topic
-        mock_get_next_research_task.return_value = {
-            "characteristic": "Test Characteristic",
-            "topic": "Test Topic"
-        }
-
-        # Mock time to get a predictable timestamp
         mock_strftime.return_value = "20250904123456"
-
-        # Mock the file writing and pedigree appending to be successful
         mock_write_file.invoke.return_value = {"status": "ok"}
-        mock_append_to_pedigree.return_value = None
 
-        # Create a state with a dummy report
-        from langchain_core.messages import AIMessage
-        state = self.create_test_state()
-        state["messages"] = [AIMessage(content="# Data Prospecting Report\nThis is a test report.")]
-        state["task_queue"] = ["dummy_task"]
+        state = self.create_test_state(
+            current_task={"characteristic": "Test Characteristic", "topic": "Test Topic"},
+            research_findings=["# Data Prospecting Report\nThis is a test report."]
+        )
 
         # Act
         result = archive_node(state)
 
         # Assert
-        # 1. Check that the filepath was constructed as expected
         expected_filename = "test_characteristic_test_topic_20250904123456.md"
         expected_filepath = f"output/approved_books/{expected_filename}"
         
-        # 2. Verify that write_file was called with the correct path and content
         mock_write_file.invoke.assert_called_once_with({
             "filepath": expected_filepath,
             "content": "# Data Prospecting Report\nThis is a test report."
         })
-
-        # 3. Verify that the pedigree was updated
         mock_append_to_pedigree.assert_called_once()
-
-        # 4. Check the confirmation message
         assert "Successfully archived document" in result["messages"][-1].content
-        assert expected_filepath in result["messages"][-1].content

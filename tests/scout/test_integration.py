@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from unittest.mock import patch, MagicMock
 from aclarai_claimify.scout.graph import build_graph
 from aclarai_claimify.scout.state import DataScoutState
@@ -25,7 +26,17 @@ class TestIntegration:
         
         # Mock checkpointer
         mock_checkpointer = MagicMock()
-        mock_sqlite_saver.from_conn_string.return_value.__enter__.return_value = mock_checkpointer
+        mock_checkpoint_tuple = MagicMock()
+        mock_checkpoint_tuple.checkpoint = {
+            "v": 4,
+            "id": str(uuid.uuid4()),
+            "ts": "2025-09-06T19:40:00Z",
+            "channel_values": {},
+            "channel_versions": {},
+            "versions_seen": {},
+        }
+        mock_checkpointer.get_tuple.return_value = mock_checkpoint_tuple
+        mock_sqlite_saver.from_conn_string.return_value = mock_checkpointer
         
         # Mock supervisor decisions
         mock_structured_llm = MagicMock()
@@ -49,7 +60,6 @@ class TestIntegration:
         thread_config = {"configurable": {"thread_id": "test-thread"}}
         initial_state = {
             "messages": [HumanMessage(content="Find information about AI agents")],
-            "task_queue": [],
             "research_findings": [],
             "pedigree_path": "test_pedigree.md",
             "decision_history": [],
@@ -96,7 +106,17 @@ class TestIntegration:
         
         # Mock checkpointer
         mock_checkpointer = MagicMock()
-        mock_sqlite_saver.from_conn_string.return_value.__enter__.return_value = mock_checkpointer
+        mock_checkpoint_tuple = MagicMock()
+        mock_checkpoint_tuple.checkpoint = {
+            "v": 4,
+            "id": str(uuid.uuid4()),
+            "ts": "2025-09-06T19:40:00Z",
+            "channel_values": {},
+            "channel_versions": {},
+            "versions_seen": {},
+        }
+        mock_checkpointer.get_tuple.return_value = mock_checkpoint_tuple
+        mock_sqlite_saver.from_conn_string.return_value = mock_checkpointer
         
         # Mock supervisor decisions - go to synthetic after research fails
         mock_structured_llm = MagicMock()
@@ -131,7 +151,6 @@ class TestIntegration:
         thread_config = {"configurable": {"thread_id": "test-thread-fail"}}
         initial_state = {
             "messages": [HumanMessage(content="Find information about quantum computing")],
-            "task_queue": [],
             "research_findings": [],
             "pedigree_path": "test_pedigree.md",
             "decision_history": [],

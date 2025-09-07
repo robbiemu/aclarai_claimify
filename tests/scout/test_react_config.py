@@ -3,94 +3,70 @@ Test for configurable ReAct max_iterations functionality.
 """
 import pytest
 from unittest.mock import Mock, patch
-from aclarai_claimify.data_models import ClaimifyConfig, AgentsConfig, AgentsReactConfig
+from aclarai_claimify.data_models import ClaimifyConfig, ScoutAgentConfig, ScoutAgentNodesConfig, ScoutAgentResearchNodeConfig, ScoutAgentMissionPlanConfig, ScoutAgentWriterConfig
 from aclarai_claimify.scout.nodes import research_node
 from aclarai_claimify.scout.state import DataScoutState
+from langchain_core.messages import HumanMessage, AIMessage
 
 
-def test_react_max_iterations_default():
-    """Test that default max_iterations is 3."""
-    config = ClaimifyConfig()
-    assert config.agents.react.max_iterations == 3
+def test_research_node_max_iterations_default():
+    """Test that the default max_iterations for the research node is 7."""
+    config = ScoutAgentNodesConfig()
+    assert config.research.max_iterations == 7
 
 
-def test_react_max_iterations_custom():
-    """Test that custom max_iterations is respected."""
-    config = ClaimifyConfig(agents=AgentsConfig(react=AgentsReactConfig(max_iterations=5)))
-    assert config.agents.react.max_iterations == 5
+def test_research_node_max_iterations_custom():
+    """Test that custom max_iterations for the research node is respected."""
+    config = ScoutAgentNodesConfig(research=ScoutAgentResearchNodeConfig(max_iterations=5))
+    assert config.research.max_iterations == 5
 
 
-def test_react_max_iterations_validation():
-    """Test that max_iterations validation works."""
+def test_research_node_max_iterations_validation():
+    """Test that research node max_iterations validation works."""
     # Valid range
-    config = ClaimifyConfig(agents=AgentsConfig(react=AgentsReactConfig(max_iterations=1)))
-    assert config.agents.react.max_iterations == 1
-    
-    config = ClaimifyConfig(agents=AgentsConfig(react=AgentsReactConfig(max_iterations=50)))
-    assert config.agents.react.max_iterations == 50
+    ScoutAgentResearchNodeConfig(max_iterations=1)
+    ScoutAgentResearchNodeConfig(max_iterations=50)
     
     # Invalid values should raise validation error
-    with pytest.raises(Exception):  # Pydantic validation error
-        ClaimifyConfig(agents=AgentsConfig(react=AgentsReactConfig(max_iterations=0)))
-    
-    with pytest.raises(Exception):  # Pydantic validation error
-        ClaimifyConfig(agents=AgentsConfig(react=AgentsReactConfig(max_iterations=51)))
+    with pytest.raises(Exception):
+        ScoutAgentResearchNodeConfig(max_iterations=0)
+    with pytest.raises(Exception):
+        ScoutAgentResearchNodeConfig(max_iterations=51)
 
 
-def test_research_node_uses_config_max_iterations():
+@patch('aclarai_claimify.scout.nodes.load_claimify_config')
+@patch('aclarai_claimify.scout.nodes.ChatLiteLLM')
+@patch('aclarai_claimify.scout.nodes.get_tools_for_role')
+def test_research_node_uses_config_max_iterations(mock_get_tools, mock_chat_llm, mock_load_config):
     """Test that research_node uses configured max_iterations."""
-    # Mock the necessary functions and classes
-    with patch('aclarai_claimify.scout.nodes.load_claimify_config') as mock_config, \
-         patch('aclarai_claimify.scout.nodes.create_llm') as mock_create_llm, \
-         patch('aclarai_claimify.scout.nodes.get_tools_for_role') as mock_get_tools:
-        
-        # Set up custom config with max_iterations = 7
-        custom_config = ClaimifyConfig(
-            agents=AgentsConfig(react=AgentsReactConfig(max_iterations=7))
-        )
-        mock_config.return_value = custom_config
-        
-        # Mock LLM and tools
-        mock_llm = Mock()
-        mock_create_llm.return_value = mock_llm
-        mock_get_tools.return_value = []
-        
-        # Create state with a simple message
-        from langchain_core.messages import HumanMessage
-        state = DataScoutState(
-            messages=[HumanMessage(content="Find examples of atomic requirements")]
-        )
-        
-        # Mock the research agent to raise an exception after we confirm max_iterations
-        # We'll capture what max_iterations was used by mocking the loop
-        captured_max_iterations = None
-        
-        def mock_invoke(*args, **kwargs):
-            nonlocal captured_max_iterations
-            # This simulates the research_node reading the max_iterations from config
-            captured_max_iterations = custom_config.agents.react.max_iterations
-            # Raise exception to exit early and check our captured value
-            raise Exception("Test exception to exit early")
-        
-        mock_llm_with_tools = Mock()
-        mock_llm.bind_tools.return_value = mock_llm_with_tools
-        mock_llm_with_tools.invoke = mock_invoke
-        
-        # Call the research_node
-        with pytest.raises(Exception, match="Test exception to exit early"):
-            research_node(state)
-        
-        # Verify that our custom max_iterations value was read
-        assert captured_max_iterations == 7
-        
-        # Verify config was loaded
-        mock_config.assert_called_once()
-        mock_create_llm.assert_called_once_with(custom_config, "research")
+    # --- Arrange ---
+    # Set up custom config with max_iterations = 5
+    mock_research_config = ScoutAgentResearchNodeConfig(max_iterations=5)
+    mock_scout_config = ScoutAgentConfig(
+        mission_plan=ScoutAgentMissionPlanConfig(goal="Test Goal", nodes=[], tools={}),
+        writer=ScoutAgentWriterConfig(),
+        nodes=ScoutAgentNodesConfig(research=mock_research_config)
+    )
+    custom_config = ClaimifyConfig(scout_agent=mock_scout_config)
+    mock_load_config.return_value = custom_config
 
+    # Mock LLM and tools
+    mock_llm_instance = Mock()
+    mock_chat_llm.return_value = mock_llm_instance
+    mock_get_tools.return_value = []
 
-if __name__ == "__main__":
-    # Run tests
-    test_react_max_iterations_default()
-    test_react_max_iterations_custom()
-    test_react_max_iterations_validation()
-    print("All tests passed!")
+    # Mock LLM to return a final report on the last iteration
+    final_report = AIMessage(content="# Data Prospecting Report\nSuccess")
+    # Simulate the loop by having invoke return non-reports until the last call
+    mock_llm_instance.invoke.side_effect = [AIMessage(content="Thinking...")] * 4 + [final_report]
+
+    # Create state
+    state = DataScoutState(messages=[HumanMessage(content="Find stuff")])
+
+    # --- Act ---
+    research_node(state)
+
+    # --- Assert ---
+    # The research_node's internal loop should run `max_iterations` times.
+    # So, the LLM should be invoked 5 times.
+    assert mock_llm_instance.invoke.call_count == 5
