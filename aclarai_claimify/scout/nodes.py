@@ -18,9 +18,10 @@ from langchain_litellm import ChatLiteLLM
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 
-from aclarai_claimify.scout.tools import (
+from .tools import (
     get_tools_for_role,
     write_file,
+    _truncate_response_for_role,
 )
 from .utils import (
     get_characteristic_context,
@@ -179,12 +180,14 @@ def supervisor_node(state: DataScoutState) -> Dict:
         top = current_task["topic"]
         progress[current_mission][char]["collected"] += 1
         progress[current_mission][char]["topics"][top]["collected"] += 1
-        # Clear messages for the next task
-        messages = []
+        # After successful archive, signal end of current sample cycle
+        # Let the MissionRunner decide whether to continue with another sample
+        print("✅ Supervisor: Sample archived successfully. Ending current sample cycle.")
+        return {"next_agent": "end", "progress": progress}
 
     # --- 3. Select Next Task (if necessary) ---
-    # We only select a new task if the last action was an archive or if there's no current task.
-    if not current_task or last_action_agent == "archive":
+    # We only select a new task if there's no current task.
+    if not current_task:
         next_task = _get_next_task_from_progress(progress)
     else:
         next_task = current_task
@@ -236,15 +239,25 @@ def supervisor_node(state: DataScoutState) -> Dict:
 
     messages = state.get("messages", [])
 
-    fitness_report = state.get("fitness_report")
+    # Check if we have a new research report first (this takes priority over old fitness reports)
+    last_message_content = str(messages[-1].content) if messages else ""
+    has_new_research_report = (
+        decision_history
+        and decision_history[-1] == "research"
+        and "# Data Prospecting Report" in last_message_content
+    )
+    
+    # Only check for old fitness reports if we don't have a new research report
+    fitness_report = state.get("fitness_report") if not has_new_research_report else None
 
     if fitness_report:
-        state["fitness_report"] = None
-
         if fitness_report.passed:
             print(
                 "✅ Supervisor: Detected PASSED fitness report in state. Deterministically routing to 'archive'."
             )
+            # Clear the fitness report from state
+            state_dict = dict(state)
+            state_dict["fitness_report"] = None
 
             return {
                 "next_agent": "archive",
@@ -267,6 +280,10 @@ def supervisor_node(state: DataScoutState) -> Dict:
             print(
                 "❌ Supervisor: Detected FAILED fitness report in state. Proposing a new task to the supervisor."
             )
+            # Clear the fitness report from state
+            state_dict = dict(state)
+            state_dict["fitness_report"] = None
+            
             # --- NEW: Log the failure ---
             task_history = state.get("task_history", [])
             current_task = state.get("current_task")
@@ -415,6 +432,8 @@ def supervisor_node(state: DataScoutState) -> Dict:
             "synthetic_budget": synthetic_budget,
             # Pass the extracted content to the next node
             "research_findings": research_findings,
+            # Clear any old fitness report when routing to fitness for a new report
+            "fitness_report": None,
         }
 
     base_prompt = """You are the supervisor of a team of Data Prospecting agents. Your role is to analyze the current mission status and decide which agent should act next.
@@ -443,12 +462,15 @@ Available Agents:
 **4. Strategic Reasoning Guidance:**
 Your goal is to guide the team to produce a final corpus of approximately {total_samples_target} samples, of which roughly {max_synthetic_samples} should be synthetic.
 
-When deciding between `research` and `synthetic`, you must manage the synthetic budget proactively.
-- The current status is **{synthetic_samples_generated} synthetic samples out of {total_samples_generated} total samples produced so far.**
-- If the proportion of synthetic samples is currently much lower than the final target proportion ({synthetic_budget:.0%}), you may have trouble finding enough real-world examples later. Starting with `synthetic` now could be an efficient choice.
-- If the proportion of synthetic samples is already near or above the target, you must prioritize `research` to avoid exceeding the budget.
+When deciding between `research` and `synthetic`, you must manage the synthetic budget thoughtfully:
+- **Current Status**: You have generated **{synthetic_samples_generated} synthetic samples** out of {total_samples_generated} total samples so far.
+- **Mission Target**: Your mission allows for up to **{max_synthetic_samples} synthetic samples** out of {total_samples_target} total samples.
+- **Remaining Budget**: You still have **{max_synthetic_samples - synthetic_samples_generated} synthetic samples** available in your budget.
+- **Remaining Work**: You need to generate **{total_samples_target - total_samples_generated} more samples** to complete the mission.
 
-A perfect final ratio is not required, but you should guide the process toward the mission's goal."""
+Even if your current synthetic rate seems high, consider whether you still have room in your overall budget to generate synthetic samples, especially if research is proving challenging. Focus on the remaining budget rather than just the current rate.
+
+A perfect final ratio is not required, but you should guide the process toward the mission's goal while respecting your remaining budget."""
 
     last_action_analysis = ""
     last_message_content = (
@@ -566,6 +588,8 @@ Your response MUST be a JSON object matching the required schema, with a single 
         "synthetic_samples_generated": synthetic_samples_generated,
         "research_samples_generated": research_samples_generated,
         "synthetic_budget": synthetic_budget,
+        # Clear any fitness report when falling through to standard logic
+        "fitness_report": None,
     }
 
 
@@ -867,6 +891,33 @@ When you have successfully found and extracted a suitable source, you MUST outpu
                             f"         ▶ Executing {tool_name} with args: {str(tool_args)[:200]} ..."
                         )
                         tool_result = matching_tool.invoke(tool_args)
+                        
+                        # Validate search tool results to ensure URLs are accessible
+                        if tool_name in ["web_search", "arxiv_search", "wikipedia_search"] and isinstance(tool_result, dict):
+                            if tool_result.get("status") == "ok" and tool_result.get("results"):
+                                from .scout_utils import _validate_search_results
+                                print(f"         🔍 Validating {tool_name} results...")
+                                validation_result = _validate_search_results(
+                                    tool_result["results"], 
+                                    tool_name, 
+                                    tool_args, 
+                                    matching_tool
+                                )
+                                
+                                tool_result["results"] = validation_result["results"]
+                                tool_result["validation_info"] = validation_result
+                                print(f"         ✅ {tool_name} results validated ({len(validation_result['results'])} results)")
+                                
+                                # Log retry information if performed
+                                if validation_result.get("retry_performed"):
+                                    if validation_result.get("retry_successful"):
+                                        print(f"         🔄 {tool_name}: Auto-retry successful")
+                                    else:
+                                        print(f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful")
+
+                        # Truncate the tool result based on the research role's max_tokens setting
+                        if isinstance(tool_result, dict):
+                            tool_result = _truncate_response_for_role(tool_result, "research")
 
                         # Append ToolMessage for agent observation
                         react_messages.append(

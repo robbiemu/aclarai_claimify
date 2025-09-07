@@ -3,6 +3,25 @@ missions:
   - name: "production_corpus"
     target_size: 1 #110  # Samples per goal
     synthetic_budget: 1.0 # Allow 100% synthetic data to create perfect edge cases
+    tools:
+      web_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 5
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
+      arxiv_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 3
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
+      wikipedia_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 3
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
     goals:
       - characteristic: "Verifiability"
         context: "The goal is to find source documents that contain a mix of verifiable facts and subjective, unverifiable content. The ideal document is something like a news report, a product review, or an opinion editorial that blends factual statements (e.g., 'the product costs $50') with opinions (e.g., 'it's a wonderful product'). This mix is essential for training the Selection agent to correctly identify and isolate factual content."
@@ -18,6 +37,25 @@ missions:
   - name: "research_dataset"
     target_size: 2 #290 # Samples per component
     synthetic_budget: 0.2 # Allow up to 20% synthetic data
+    tools:
+      web_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 5
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
+      arxiv_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 3
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
+      wikipedia_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 3
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
     goals:
       - characteristic: "Verifiability"
         context: "The goal is to find source documents that contain a mix of verifiable facts and subjective, unverifiable content. The ideal document is something like a news report, a product review, or an opinion editorial that blends factual statements (e.g., 'the product costs $50') with opinions (e.g., 'it's a wonderful product'). This mix is essential for training the Selection agent to correctly identify and isolate factual content."

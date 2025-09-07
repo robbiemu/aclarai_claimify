@@ -292,6 +292,35 @@ class ScoutAgentNodesConfig(BaseModel):
     # We can add configs for other nodes here later if needed
 
 
+class ScoutAgentMissionPlanToolConfig(BaseModel):
+    """Configuration for individual tools used by the Data Scout Agent."""
+
+    pre_fetch_pages: bool = Field(
+        default=False,
+        description="Whether to pre-fetch and validate URLs returned by search results."
+    )
+    pre_fetch_limit: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Maximum number of pages to pre-fetch from search results."
+    )
+    validate_urls: bool = Field(
+        default=True,
+        description="Whether to validate URLs for accessibility before using them."
+    )
+    retry_on_failure: bool = Field(
+        default=True,
+        description="Whether to retry failed operations with modified parameters."
+    )
+    max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum number of retries for failed operations."
+    )
+
+
 class ScoutAgentMissionPlanConfig(BaseModel):
     """Defines the mission plan for the Data Scout Agent."""
 
@@ -302,6 +331,10 @@ class ScoutAgentMissionPlanConfig(BaseModel):
         default_factory=list,
         description="Configuration for each node in the agent graph.",
     )
+    tools: Dict[str, ScoutAgentMissionPlanToolConfig] = Field(
+        default_factory=dict,
+        description="Configuration for individual tools used in the mission.",
+    )
 
     def get_node_config(self, name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]:
         """Retrieve the configuration for a specific node by name."""
@@ -309,6 +342,10 @@ class ScoutAgentMissionPlanConfig(BaseModel):
             if node.name == name:
                 return node
         return None
+
+    def get_tool_config(self, tool_name: str) -> Optional[ScoutAgentMissionPlanToolConfig]:
+        """Retrieve the configuration for a specific tool by name."""
+        return self.tools.get(tool_name)
 
 
 class ScoutAgentWriterConfig(BaseModel):

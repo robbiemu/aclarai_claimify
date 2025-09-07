@@ -271,6 +271,8 @@ class DataScoutTUI(App):
         recursion_limit: int = 1000,
         mission_name: str = "",
         total_samples_target: int = 1200,
+        resume_from: Optional[str] = None,
+        checkpoint_db_path: Optional[str] = None,
     ):
         super().__init__()
         # STORE the prompt
@@ -284,6 +286,8 @@ class DataScoutTUI(App):
         self.log_handle = None
         self.recursion_limit = recursion_limit
         self.mission_name = mission_name
+        self.resume_from = resume_from
+        self.checkpoint_db_path = checkpoint_db_path
 
         # Components
         self.stats_header = None
@@ -460,14 +464,20 @@ class DataScoutTUI(App):
             )
 
             # Start the actual agent process
-            process = await asyncio.create_subprocess_exec(
+            command = [
                 "aclarai-claimify-scout",
                 "--mission",
-                self.mission_path,
+                self.mission_name,  # Use mission_name directly
                 "--recursion-limit",
                 str(self.recursion_limit),
-                "--mission",
-                str(self.mission_name),  # Ensure it's converted to string
+            ]
+            if self.resume_from:
+                command.extend(["--resume-from", self.resume_from])
+            if self.checkpoint_db_path:
+                command.extend(["--checkpoint-db", self.checkpoint_db_path])
+
+            process = await asyncio.create_subprocess_exec(
+                *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -1006,6 +1016,14 @@ def generate(
     log: Optional[str] = typer.Option(
         None, "--log", help="Log file to save terminal output for debugging"
     ),
+    resume_from: Optional[str] = typer.Option(
+        None, "--resume-from", help="The thread ID to resume from."
+    ),
+    checkpoint_db_path: str = typer.Option(
+        "checkpoints/mission_checkpoints.db",
+        "--checkpoint-db",
+        help="Path to the checkpoint database.",
+    ),
 ):
     """Start the Data Scout Agent TUI for sample generation."""
 
@@ -1083,6 +1101,8 @@ def generate(
         recursion_limit=recursion_limit,
         mission_name=chosen_mission_name,
         total_samples_target=total_samples_target,
+        resume_from=resume_from,
+        checkpoint_db_path=checkpoint_db_path,
     )
     app.run()
 

@@ -6,3 +6,6 @@ try:
 except ImportError as e:
     print(f"⚠️  Warning: Could not import LiteLLM patches: {e}")
     print("Some Ollama functionality may be limited.")
+
+# Export key classes
+from .mission_runner import MissionRunner

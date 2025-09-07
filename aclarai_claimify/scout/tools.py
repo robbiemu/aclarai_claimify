@@ -363,16 +363,20 @@ def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str
     if max_tokens is None:
         max_tokens = 1000
     
-    # Only truncate if we have a results field that's a string
-    if "results" in response and isinstance(response["results"], str):
-        # Rough approximation: assume 1 token ≈ 4 characters
-        max_chars = max_tokens * 4
-        
-        # If the results are longer than our limit, truncate them
-        if len(response["results"]) > max_chars:
-            truncated = response["results"][:max_chars]
-            # Add a note that the response was truncated
-            response["results"] = truncated + f"\n\n[Response truncated to {max_chars} characters due to token limits for role '{role}']"
+    # Fields that might contain large text content
+    text_fields = ["results", "markdown", "content", "text", "output"]
+    
+    # Check each text field and truncate if necessary
+    for field in text_fields:
+        if field in response and isinstance(response[field], str):
+            # Rough approximation: assume 1 token ≈ 4 characters
+            max_chars = max_tokens * 4
+            
+            # If the field content is longer than our limit, truncate it
+            if len(response[field]) > max_chars:
+                truncated = response[field][:max_chars]
+                # Add a note that the response was truncated
+                response[field] = truncated + f"\n\n[Response truncated to {max_chars} characters due to token limits for role '{role}']"
     
     return response
 

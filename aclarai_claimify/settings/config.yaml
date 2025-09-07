@@ -5,11 +5,11 @@ window:
 
 model:
   claimify:
-    selection: "openai/gpt-4o-mini"
-    disambiguation: "openai/gpt-4o-mini"
-    decomposition: "openai/gpt-4o-mini"
-    default: "openai/gpt-4o-mini"
-  fallback_plugin: "openai/gpt-4o-mini"
+    selection: "openai/gpt-5-mini"
+    disambiguation: "openai/gpt-5-mini"
+    decomposition: "openai/gpt-5-mini"
+    default: "openai/gpt-5-mini"
+  fallback_plugin: "openai/gpt-5-mini"
 
 processing:
   claimify:

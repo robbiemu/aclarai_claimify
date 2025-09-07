@@ -1,5 +1,9 @@
 # Scout Tools Documentation
 
+## Overview
+
+The Data Scout Agent includes several specialized tools for finding and retrieving information from various sources. These tools are designed to be robust and efficient, with built-in validation and retry mechanisms to handle common network issues.
+
 ## Arxiv Search Tool
 
 The `arxiv_search` tool allows you to search for academic papers on Arxiv.org. It's a free tool that doesn't require API keys.
@@ -46,6 +50,35 @@ result = documentation_crawler(
     ignore_paths=["/docs/admin", "/docs/private"]
 )
 ```
+
+## Tool Configuration and Validation
+
+All search tools support advanced configuration options for prefetching and validation to make the research process more robust:
+
+### Prefetching and Validation Features
+
+1. **URL Validation**: Tools can automatically validate that URLs are accessible before returning results
+2. **Automatic Retry**: When all results are inaccessible, tools can automatically retry with expanded result sets
+3. **Smart Filtering**: Previously validated bad URLs are excluded from retry attempts to avoid redundant checks
+4. **Efficient Checking**: Uses HEAD requests for initial validation to minimize bandwidth usage
+
+### Configuration
+
+Tool behavior can be configured in the mission plan YAML file:
+
+```yaml
+missions:
+  - name: "production_corpus"
+    tools:
+      web_search:
+        pre_fetch_pages: true
+        pre_fetch_limit: 5
+        validate_urls: true
+        retry_on_failure: true
+        max_retries: 2
+```
+
+See the [Data Scout Agent Guide](../guides/data-scout-agent.md#65-advanced-configuration-tool-prefetching-and-validation) for complete documentation of tool configuration options.
 
 ## Response Truncation
 
