@@ -34,78 +34,22 @@ from .state import DataScoutState
 from .models import FitnessReport
 from ..config import ClaimifyConfig, load_claimify_config
 from ..data_models import ScoutAgentMissionPlanNodeConfig
+from pydantic import BaseModel, Field
 
 
-# --- Mission Progress Tracker Functions ---
+class SupervisorDecision(BaseModel):
+    """Defines the structured decision output for the supervisor LLM."""
+
+    next_agent: str = Field(
+        ...,
+        description="The name of the next agent to route to (e.g., 'research', 'fitness').",
+    )
+    new_task: Optional[Dict] = Field(
+        None,
+        description="Optional: A new task to assign if the supervisor decides to switch focus.",
+    )
 
 
-def _initialize_progress_tracker(mission_name: str) -> Dict:
-    """Builds the initial progress tracker from the mission YAML."""
-    try:
-        with open("settings/scout_mission.yaml", "r") as f:
-            content = f.read()
-            if content.startswith("#"):
-                first_newline = content.find("\n")
-                if first_newline != -1:
-                    content = content[first_newline + 1 :]
-            mission_config = yaml.safe_load(content)
-
-        target_mission = None
-        for mission in mission_config.get("missions", []):
-            if mission.get("name") == mission_name:
-                target_mission = mission
-                break
-
-        if not target_mission:
-            print(f"⚠️  Mission '{mission_name}' not found in configuration")
-            return {}
-
-        progress_tracker = {mission_name: {}}
-        for goal in target_mission.get("goals", []):
-            characteristic = goal.get("characteristic", "")
-            topics = goal.get("topics", [])
-            characteristic_target_size = target_mission.get("target_size", 1)
-            per_topic_target = math.ceil(characteristic_target_size / len(topics))
-            progress_tracker[mission_name][characteristic] = {
-                "target": characteristic_target_size,
-                "collected": 0,
-                "topics": {
-                    topic: {"collected": 0, "target": per_topic_target}
-                    for topic in topics
-                },
-            }
-
-        print(f"📋 Initialized progress tracker for mission '{mission_name}'")
-        return progress_tracker
-
-    except Exception as e:
-        print(f"❌ Error initializing progress tracker: {e}")
-        return {}
-
-
-def _get_next_task_from_progress(
-    progress: Dict, exclude: Optional[List[tuple[str, str]]] = None
-) -> Optional[Dict]:
-    """Finds the next uncompleted characteristic/topic pair."""
-    if not progress:
-        return None
-
-    mission_name = list(progress.keys())[0]
-    eligible_tasks = []
-    for char, char_data in progress[mission_name].items():
-        if char_data["collected"] < char_data["target"]:
-            for topic, topic_data in char_data["topics"].items():
-                if topic_data["collected"] < topic_data["target"]:
-                    if not exclude or (char, topic) not in exclude:
-                        eligible_tasks.append({"characteristic": char, "topic": topic})
-
-    if not eligible_tasks:
-        return None
-
-    return random.choice(eligible_tasks)
-
-
-# --- LLM and Agent Creation ---
 
 
 def create_llm(config: ClaimifyConfig, role: str) -> ChatLiteLLM:
@@ -143,22 +87,26 @@ def create_agent_runnable(llm: ChatLiteLLM, system_prompt: str, role: str):
     return prompt | llm
 
 
-# --- Pydantic Models for Structured Output ---
+def _get_next_task_from_progress(
+    progress: Dict, exclude: Optional[List[tuple[str, str]]] = None
+) -> Optional[Dict]:
+    """Finds the next uncompleted characteristic/topic pair."""
+    if not progress:
+        return None
 
+    mission_name = list(progress.keys())[0]
+    eligible_tasks = []
+    for char, char_data in progress[mission_name].items():
+        if char_data["collected"] < char_data["target"]:
+            for topic, topic_data in char_data["topics"].items():
+                if topic_data["collected"] < topic_data["target"]:
+                    if not exclude or (char, topic) not in exclude:
+                        eligible_tasks.append({"characteristic": char, "topic": topic})
 
-class SupervisorDecision(pydantic.BaseModel):
-    """The supervisor's decision on the next agent to run."""
+    if not eligible_tasks:
+        return None
 
-    next_agent: str = pydantic.Field(
-        description="The name of the next agent to run. Must be one of 'research', 'archive', 'fitness', 'synthetic', or 'end'."
-    )
-    new_task: Optional[Dict] = pydantic.Field(
-        None,
-        description="If you are switching to a new task, provide the new characteristic and topic here.",
-    )
-
-
-# --- Agent Node Implementations ---
+    return random.choice(eligible_tasks)
 
 
 def supervisor_node(state: DataScoutState) -> Dict:
@@ -166,24 +114,10 @@ def supervisor_node(state: DataScoutState) -> Dict:
     config = load_claimify_config()
     llm = create_llm(config, "supervisor")
 
-    # --- 1. Load State & Initialize Tracker ---
+    # --- 1. Load State ---
     progress = state.get("progress", {})
     current_mission = state.get("current_mission", "production_corpus")
-    if not progress:
-        progress = _initialize_progress_tracker(current_mission)
-
-    # --- 2. Update Progress Based on Last Action ---
-    last_action_agent = state.get("last_action_agent")
     current_task = state.get("current_task")
-    if last_action_agent == "archive" and current_task:
-        char = current_task["characteristic"]
-        top = current_task["topic"]
-        progress[current_mission][char]["collected"] += 1
-        progress[current_mission][char]["topics"][top]["collected"] += 1
-        # After successful archive, signal end of current sample cycle
-        # Let the MissionRunner decide whether to continue with another sample
-        print("✅ Supervisor: Sample archived successfully. Ending current sample cycle.")
-        return {"next_agent": "end", "progress": progress}
 
     # --- 3. Select Next Task (if necessary) ---
     # We only select a new task if there's no current task.
@@ -231,6 +165,28 @@ def supervisor_node(state: DataScoutState) -> Dict:
     research_attempts = state.get("research_attempts", 0)
     consecutive_failures = state.get("consecutive_failures", 0)
     last_action_status = state.get("last_action_status", "success")
+    last_action_agent = state.get("last_action_agent", "")
+
+    # If the last action was a successful archive, end the current cycle.
+    if last_action_agent == "archive":
+        print("✅ Supervisor: Detected a successful archival. Ending the current cycle.")
+        # Pass the full state along with the decision to end.
+        return {
+            "next_agent": "end",
+            "progress": state.get("progress", {}),
+            "current_task": state.get("current_task"),
+            "strategy_block": state.get("strategy_block", ""),
+            "decision_history": state.get("decision_history", []),
+            "tool_execution_failures": state.get("tool_execution_failures", 0),
+            "research_attempts": state.get("research_attempts", 0),
+            "consecutive_failures": state.get("consecutive_failures", 0),
+            "last_action_status": "success",
+            "last_action_agent": "supervisor",
+            "synthetic_samples_generated": state.get("synthetic_samples_generated", 0),
+            "research_samples_generated": state.get("research_samples_generated", 0),
+            "synthetic_budget": state.get("synthetic_budget", 0.2),
+            "fitness_report": None,
+        }
 
     synthetic_samples_generated = state.get("synthetic_samples_generated", 0)
     research_samples_generated = state.get("research_samples_generated", 0)
@@ -246,9 +202,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
         and decision_history[-1] == "research"
         and "# Data Prospecting Report" in last_message_content
     )
-    
+
     # Only check for old fitness reports if we don't have a new research report
-    fitness_report = state.get("fitness_report") if not has_new_research_report else None
+    fitness_report = (
+        state.get("fitness_report") if not has_new_research_report else None
+    )
 
     if fitness_report:
         if fitness_report.passed:
@@ -283,7 +241,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
             # Clear the fitness report from state
             state_dict = dict(state)
             state_dict["fitness_report"] = None
-            
+
             # --- NEW: Log the failure ---
             task_history = state.get("task_history", [])
             current_task = state.get("current_task")
@@ -758,7 +716,11 @@ When you have successfully found and extracted a suitable source, you MUST outpu
             )
         elif iteration == max_iterations - 1:
             # Disable discovery; force extraction
-            current_tools = [t for t in all_research_tools if t.name not in ["web_search", "arxiv_search", "wikipedia_search"]]
+            current_tools = [
+                t
+                for t in all_research_tools
+                if t.name not in ["web_search", "arxiv_search", "wikipedia_search"]
+            ]
             warning_message = (
                 "\n\n**SYSTEM WARNING:** You have 2 iterations remaining. "
                 "The search tools (`web_search`, `arxiv_search`, `wikipedia_search`) have been disabled. Analyze current leads and extract a full document. This is the last turn that you may use the tools you are being provided."
@@ -891,33 +853,48 @@ When you have successfully found and extracted a suitable source, you MUST outpu
                             f"         ▶ Executing {tool_name} with args: {str(tool_args)[:200]} ..."
                         )
                         tool_result = matching_tool.invoke(tool_args)
-                        
+
                         # Validate search tool results to ensure URLs are accessible
-                        if tool_name in ["web_search", "arxiv_search", "wikipedia_search"] and isinstance(tool_result, dict):
-                            if tool_result.get("status") == "ok" and tool_result.get("results"):
+                        if tool_name in [
+                            "web_search",
+                            "arxiv_search",
+                            "wikipedia_search",
+                        ] and isinstance(tool_result, dict):
+                            if tool_result.get("status") == "ok" and tool_result.get(
+                                "results"
+                            ):
                                 from .scout_utils import _validate_search_results
+
                                 print(f"         🔍 Validating {tool_name} results...")
                                 validation_result = _validate_search_results(
-                                    tool_result["results"], 
-                                    tool_name, 
-                                    tool_args, 
-                                    matching_tool
+                                    tool_result["results"],
+                                    tool_name,
+                                    tool_args,
+                                    matching_tool,
                                 )
-                                
+
                                 tool_result["results"] = validation_result["results"]
                                 tool_result["validation_info"] = validation_result
-                                print(f"         ✅ {tool_name} results validated ({len(validation_result['results'])} results)")
-                                
+                                print(
+                                    f"         ✅ {tool_name} results validated ({len(validation_result['results'])} results)"
+                                )
+
                                 # Log retry information if performed
                                 if validation_result.get("retry_performed"):
                                     if validation_result.get("retry_successful"):
-                                        print(f"         🔄 {tool_name}: Auto-retry successful")
+                                        print(
+                                            f"         🔄 {tool_name}: Auto-retry successful"
+                                        )
                                     else:
-                                        print(f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful")
+                                        print(
+                                            f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful"
+                                        )
 
                         # Truncate the tool result based on the research role's max_tokens setting
                         if isinstance(tool_result, dict):
-                            tool_result = _truncate_response_for_role(tool_result, "research")
+                            tool_result = _truncate_response_for_role(
+                                tool_result, "research"
+                            )
 
                         # Append ToolMessage for agent observation
                         react_messages.append(
@@ -1188,6 +1165,8 @@ def fitness_node(state: "DataScoutState") -> Dict:
         strategy_block = get_claimify_strategy_block(characteristic)
 
     research_findings = state.get("research_findings", [])
+    # Escape braces in research findings to prevent template errors
+    escaped_research_findings = str(research_findings).replace("{", "{{").replace("}", "}}")
     fitness_schema = json.dumps(FitnessReport.model_json_schema(), indent=2)
 
     # Escape curly braces in the JSON schema to prevent f-string template conflicts
@@ -1218,7 +1197,7 @@ To be approved, the document's writing style and structure must align with the s
 {provenance_guidance}
 
 The Research Agent has returned the following document(s):
-{research_findings}
+{escaped_research_findings}
 
 Evaluate the retrieved content against the mission. Is this document a goldmine for the Copy Editor, or a waste of time?
 

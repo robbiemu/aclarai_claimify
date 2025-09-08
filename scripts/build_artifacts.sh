@@ -46,15 +46,8 @@ echo ""
 # For a real run, you would interact with the agent to provide specific requests
 # For now, we'll just show how to start it
 
-echo "To run the Data Scout Agent:"
-echo "  aclarai-claimify-scout --mission settings/scout_mission.yaml"
-echo ""
-echo "Then provide requests like:"
-echo "  'Generate samples for verifiability from news reports'"
-echo "  'Create synthetic examples for self-containment testing'"
-echo "  'Find atomicity examples in legal documents'"
-echo ""
-echo "Type 'exit' when finished."
+echo "To run the Data Scout Agent for the 'research_dataset' mission:"
+echo "  aclarai-claimify-scout --mission research_dataset"
 echo ""
 
 echo "=== STEP 1 COMPLETED ==="

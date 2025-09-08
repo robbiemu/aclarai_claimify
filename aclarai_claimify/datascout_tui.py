@@ -263,18 +263,14 @@ class DataScoutTUI(App):
 
     def __init__(
         self,
-        initial_prompt: str,
         mission_path: str = "settings/scout_mission.yaml",
         stub: bool = False,
         log_file: Optional[str] = None,
         recursion_limit: int = 1000,
         mission_name: str = "",
         total_samples_target: int = 1200,
-        resume_from: Optional[str] = None,
     ):
         super().__init__()
-        # STORE the prompt
-        self.initial_prompt = initial_prompt
         self.mission_path = mission_path
         self.stub = stub
         self.stats = GenerationStats(target=total_samples_target)
@@ -284,7 +280,6 @@ class DataScoutTUI(App):
         self.log_handle = None
         self.recursion_limit = recursion_limit
         self.mission_name = mission_name
-        self.resume_from = resume_from
 
         # Components
         self.stats_header = None
@@ -467,30 +462,16 @@ class DataScoutTUI(App):
                 self.mission_name,  # Use mission_name directly
                 "--recursion-limit",
                 str(self.recursion_limit),
-                "--non-interactive",
             ]
-            if self.resume_from:
-                command.extend(["--resume-from", self.resume_from])
 
             process = await asyncio.create_subprocess_exec(
                 *command,
-                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=os.getcwd(),
             )
 
             self.agent_process = process
-
-            # Send initial user input to start the agent
-            if process.stdin:
-                initial_request = self.initial_prompt + "\n"
-
-                process.stdin.write(initial_request.encode())
-                await process.stdin.drain()
-                safe_ui_call(
-                    self.conversation.add_message, "user", initial_request.strip()
-                )
 
             # Read output line by line
             while True:
@@ -1019,9 +1000,6 @@ def generate(
     log: Optional[str] = typer.Option(
         None, "--log", help="Log file to save terminal output for debugging"
     ),
-    resume_from: Optional[str] = typer.Option(
-        None, "--resume-from", help="The thread ID to resume from."
-    ),
 ):
     """Start the Data Scout Agent TUI for sample generation."""
 
@@ -1081,25 +1059,14 @@ def generate(
             STEPS_PER_SAMPLE * (total_samples_target + RETRY_MARGIN) * OVERHEAD_FACTOR
         )
 
-    # Step 3: Determine initial prompt (interactively if needed)
-    final_prompt = ""
-    if not stub and config.scout_agent and config.scout_agent.initial_prompt:
-        # Use prompt from config file
-        final_prompt = config.scout_agent.initial_prompt
-    elif not stub:
-        # Prompt the user interactively if not in config and not in stub mode
-        final_prompt = typer.prompt("🚀 Please enter the initial prompt for the agent")
-
-    # Step 4: Launch the main TUI (cleanly, with no setup noise)
+    # Step 3: Launch the main TUI (cleanly, with no setup noise)
     app = DataScoutTUI(
-        initial_prompt=final_prompt,
         mission_path=mission_plan_path,
         stub=stub,
         log_file=log,
         recursion_limit=recursion_limit,
         mission_name=chosen_mission_name,
         total_samples_target=total_samples_target,
-        resume_from=resume_from,
     )
     app.run()
 

@@ -54,36 +54,11 @@ echo "This will generate exactly 1200 samples (150 production + 250 research = 4
 echo "The process may take several hours to complete."
 echo ""
 
-# Create a set of sample requests to trigger the agent
-cat > /tmp/scout_requests.txt << 'EOF'
-Generate samples for verifiability from news reports
-Create examples for self-containment from historical narratives
-Find atomicity examples in legal documents
-Generate verifiable statements from scientific abstracts
-Create self-contained examples from political analysis
-Find atomic examples in policy summaries
-Generate samples for verifiability from financial statements
-Create examples for self-containment with pronoun resolution
-Find atomicity examples in contract clauses
-Generate verifiable facts from encyclopedia entries
-Create self-contained narratives from biographical sketches
-Find atomic statements in technical specifications
-EOF
+# Run the agent for a specific mission
+echo "Running agent for the 'research_dataset' mission..."
+echo "This will run non-interactively and generate samples until the mission target is met."
 
-# Run the agent with the sample requests
-echo "Running agent with sample requests..."
-echo "Note: For full automation, you would interact with the agent to provide specific requests"
-echo "targeted at each of the topics in the mission plan."
-echo ""
-
-# Start the agent in the background and send requests
-{
-    cat /tmp/scout_requests.txt
-    echo "exit"
-} | aclarai-claimify-scout --mission settings/scout_mission.yaml
-
-# Clean up
-rm /tmp/scout_requests.txt
+aclarai-claimify-scout --mission research_dataset
 
 echo ""
 echo "=== Data Generation Completed ==="

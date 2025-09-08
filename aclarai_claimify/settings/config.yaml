@@ -43,6 +43,7 @@ generate_dataset:
 
 scout_agent:
   search_provider: "brave/search"
+  recursion_per_sample: 30
   initial_prompt: |
     Begin the data prospecting mission based on your configured mission plan.
   nodes:

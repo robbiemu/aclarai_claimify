@@ -6,14 +6,72 @@ This class orchestrates the mission execution and handles checkpointing for resu
 
 import json
 import uuid
-from typing import Dict, Any, Optional, List
-import yaml
+from typing import Dict, Any, Optional
 import sqlite3
+import logging
+import math
 
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from .graph import build_graph
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+
+class MissionStateManager:
+    """Manages the persistent state of a mission."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._create_table()
+
+    def _create_table(self):
+        """Create the mission_state table if it doesn't exist."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mission_state (
+                    mission_id TEXT PRIMARY KEY,
+                    state TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+
+    def create_mission(self, mission_id: str, initial_state: Dict[str, Any]):
+        """Create a new mission entry in the database."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO mission_state (mission_id, state) VALUES (?, ?)",
+                (mission_id, json.dumps(initial_state)),
+            )
+            conn.commit()
+        logging.info(f"Mission {mission_id} created in the database.")
+
+    def get_mission_state(self, mission_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve the state of a mission."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT state FROM mission_state WHERE mission_id = ?", (mission_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+        return None
+
+    def update_mission_state(self, mission_id: str, new_state: Dict[str, Any]):
+        """Update the state of an existing mission."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE mission_state SET state = ? WHERE mission_id = ?",
+                (json.dumps(new_state), mission_id),
+            )
+            conn.commit()
+        logging.info(f"Mission {mission_id} state updated.")
 
 
 class MissionRunner:
@@ -23,234 +81,200 @@ class MissionRunner:
         self,
         checkpointer: SqliteSaver,
         app,
-        mission_plan_path: str = "settings/scout_mission.yaml",
+        mission_config: Dict[str, Any],
+        resume_from_mission_id: Optional[str] = None,
     ):
-        """Initialize the MissionRunner with the mission plan."""
-        self.mission_plan_path = mission_plan_path
-        self.mission_plan = self._load_mission_plan()
-        self.checkpoint_db_path = "checkpoints/mission_checkpoints.db"
+        """Initialize the MissionRunner with a mission configuration."""
+        self.mission_config = mission_config
         self.checkpointer = checkpointer
         self.app = app
+        self.state_manager = MissionStateManager("checkpoints/mission_checkpoints.db")
+        self.resume_from_mission_id = resume_from_mission_id
 
-    def _load_mission_plan(self) -> Dict[str, Any]:
-        """Load and parse the mission plan YAML file."""
-        try:
-            with open(self.mission_plan_path, "r") as f:
-                content = f.read()
-                if content.startswith("#"):
-                    first_newline = content.find("\n")
-                    if first_newline != -1:
-                        content = content[first_newline + 1 :]
-                return yaml.safe_load(content)
-        except Exception as e:
-            print(f"Error loading mission plan: {e}")
-            return {}
+    def _initialize_mission_state(self) -> Dict[str, Any]:
+        """Prepare the initial state for a new mission."""
+        mission_name = self.mission_config.get("name")
+        target_size = self.mission_config.get("target_size", 0)
+        goals = self.mission_config.get("goals", [])
 
-    def get_mission_names(self) -> List[str]:
-        """Get a list of available mission names from the mission plan."""
-        missions = self.mission_plan.get("missions", [])
-        return [mission.get("name") for mission in missions]
+        progress = {
+            mission_name: {
+                goal["characteristic"]: {
+                    "target": target_size,
+                    "collected": 0,
+                    "topics": {topic: {"collected": 0, "target": math.ceil(target_size / len(goal["topics"]))} for topic in goal["topics"]},
+                }
+                for goal in goals
+            }
+        }
 
-    def get_mission_by_name(self, mission_name: str) -> Optional[Dict[str, Any]]:
-        """Get a mission configuration by name."""
-        missions = self.mission_plan.get("missions", [])
-        for mission in missions:
-            if mission.get("name") == mission_name:
-                return mission
-        return None
+        return {
+            "mission_name": mission_name,
+            "total_samples_target": target_size * len(goals),
+            "samples_generated": 0,
+            "synthetic_samples_generated": 0,
+            "research_samples_generated": 0,
+            "progress": progress,
+            "synthetic_budget": self.mission_config.get("synthetic_budget", 0.2),
+            "pedigree_path": "examples/PEDIGREE.md",
+            "last_thread_id": None,
+        }
 
-    def calculate_total_samples(self, mission_name: str) -> int:
-        """Calculate the total target samples for a mission."""
-        mission = self.get_mission_by_name(mission_name)
-        if not mission:
-            return 0
-
-        target_size = mission.get("target_size", 0)
-        goals = mission.get("goals", [])
-        # Each goal is a characteristic with topics
-        # Total samples = target_size * number_of_characteristics
-        return target_size * len(goals)
-
-    def start_new_mission(self, mission_name: str, recursion_limit: int = 1000) -> str:
+    def run_mission(
+        self, recursion_limit: int = 1000, max_samples: Optional[int] = None
+    ):
         """
-        Start a new mission with a fresh thread ID.
-
-        Args:
-            mission_name: Name of the mission to run
-            recursion_limit: Maximum recursion limit for the graph
-
-        Returns:
-            Thread ID for the new mission
+        Runs a full mission from start to finish, managing state across multiple sample generation cycles.
         """
-        thread_id = str(uuid.uuid4())
-        print(f"🤖 Starting new mission '{mission_name}' with thread ID: {thread_id}")
+        if self.resume_from_mission_id:
+            mission_id = self.resume_from_mission_id
+            mission_state = self.state_manager.get_mission_state(mission_id)
+            if not mission_state:
+                logging.error(f"❌ Could not find mission with ID '{mission_id}' to resume.")
+                return
+            logging.info(f"🔄 Resuming mission with ID: {mission_id}")
+        else:
+            mission_id = f"mission_{uuid.uuid4()}"
+            logging.info(f"🚀 Starting new mission with ID: {mission_id}")
+            mission_state = self._initialize_mission_state()
+            self.state_manager.create_mission(mission_id, mission_state)
 
-        # Get mission details
-        mission = self.get_mission_by_name(mission_name)
-        total_samples_target = self.calculate_total_samples(mission_name)
+        total_target = mission_state.get("total_samples_target", 0)
 
-        # Initialize state
-        synthetic_budget = mission.get("synthetic_budget", 0.2) if mission else 0.2
+        while mission_state.get("samples_generated", 0) < total_target:
+            if (
+                max_samples is not None
+                and mission_state["samples_generated"] >= max_samples
+            ):
+                logging.info(f"Reached sample limit of {max_samples}. Ending mission.")
+                break
 
-        initial_state = {
+            thread_id = f"thread_{uuid.uuid4()}"
+            logging.info(f"  -> Starting sample cycle with thread ID: {thread_id}")
+
+            # Prepare the initial state for this specific cycle
+            cycle_state = self._prepare_cycle_state(
+                mission_id, thread_id, mission_state
+            )
+            thread_config = {"configurable": {"thread_id": thread_id}}
+            self.app.update_state(thread_config, cycle_state)
+
+            # Run the agent for one full cycle
+            self.run_full_cycle(thread_id, recursion_limit)
+
+            # After the cycle, update the master mission state
+            mission_state = self._update_mission_progress(mission_id, thread_id)
+
+            # Log progress
+            samples_done = mission_state.get("samples_generated", 0)
+            progress_pct = (
+                (samples_done / total_target) * 100 if total_target > 0 else 0
+            )
+            logging.info(
+                f"📊 Mission Progress: {samples_done}/{total_target} samples ({progress_pct:.1f}%)"
+            )
+
+        logging.info(f"🏁 Mission {mission_id} completed.")
+
+    def _prepare_cycle_state(
+        self, mission_id: str, thread_id: str, mission_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Creates the initial state for a single agent cycle."""
+        return {
             "run_id": thread_id,
+            "mission_id": mission_id,
             "messages": [],
-            "progress": {},
             "current_task": None,
             "research_findings": [],
-            "pedigree_path": "examples/PEDIGREE.md",  # Default path
             "decision_history": [],
             "tool_execution_failures": 0,
             "research_attempts": 0,
-            "samples_generated": 0,
-            "total_samples_target": total_samples_target,
-            "current_mission": mission_name,
-            "synthetic_samples_generated": 0,
-            "research_samples_generated": 0,
             "consecutive_failures": 0,
             "last_action_status": "success",
             "last_action_agent": "",
-            "synthetic_budget": synthetic_budget,
+            "fitness_report": None,
+            # Carry over mission-level info
+            "current_mission": mission_state.get("mission_name"),
+            "total_samples_target": mission_state.get("total_samples_target"),
+            "synthetic_budget": mission_state.get("synthetic_budget"),
+            "pedigree_path": mission_state.get("pedigree_path"),
+            "samples_generated": mission_state.get("samples_generated", 0),
+            "progress": mission_state.get("progress", {}),
         }
 
-        # --- FIX: Save initial state using the app's checkpointer ---
-        thread_config = {"configurable": {"thread_id": thread_id}}
-        self.app.update_state(thread_config, initial_state)
-
-        return thread_id
-
-    def resume_mission(self, thread_id: str, recursion_limit: int = 1000) -> bool:
-        """
-        Resume a mission from a checkpoint.
-
-        Args:
-            thread_id: Thread ID of the mission to resume
-
-        Returns:
-            True if mission was successfully resumed, False otherwise
-        """
-        print(f"🔄 Resuming mission with thread ID: {thread_id}")
-
-        # --- FIX: Check for checkpoint existence using the checkpointer ---
-        thread_config = {"configurable": {"thread_id": thread_id}}
-        checkpoint = self.checkpointer.get(thread_config)
-
-        if checkpoint is None:
-            print(f"❌ No checkpoint found for thread ID: {thread_id}")
-            return False
-
-        print("   -> Found existing checkpoint. Mission can be resumed.")
-        return True
-
-    def run_mission_step(
-        self, thread_id: str, user_input: str, recursion_limit: int = 1000
-    ) -> Dict[str, Any]:
-        """
-        Run a single step of the mission.
-
-        Args:
-            thread_id: Thread ID of the mission
-            user_input: User input for this step
-            recursion_limit: Maximum recursion limit for the graph
-
-        Returns:
-            Dictionary with results of the step execution
-        """
-        # --- FIX: Use the persistent app and checkpointer ---
+    def run_full_cycle(self, thread_id: str, recursion_limit: int):
+        """Runs the agent for a single cycle with a given thread_id."""
         thread_config = {
             "configurable": {"thread_id": thread_id, "recursion_limit": recursion_limit}
         }
+        inputs = {
+            "messages": [HumanMessage(content="Start the data generation cycle.")]
+        }
 
-        # Prepare inputs
-        inputs = {"messages": [HumanMessage(content=user_input)]}
-
-        # Run the graph - the checkpointer will handle state loading and saving automatically
-        results = []
         for event in self.app.stream(inputs, config=thread_config):
             for node_name, node_output in event.items():
-                results.append({"node_name": node_name, "node_output": node_output})
+                if "messages" in node_output:
+                    # Minimal logging to avoid clutter
+                    pass
+        logging.info(f"  -> Cycle for thread {thread_id} finished.")
 
-                if node_name == "__end__":
-                    print("🏁 Agent has finished the task.")
-
-        # Get the latest state from the checkpointer
-        current_state = self.app.get_state(thread_config).values
-
-        return {"results": results, "current_state": current_state}
-
-    def run_full_mission(
-        self,
-        thread_id: str,
-        initial_prompt: str,
-        recursion_limit: int,
-        max_samples: Optional[int] = None,
-    ):
-        """Runs a mission from an initial prompt until completion, managing state between cycles."""
-        # First step uses the initial prompt
-        self.run_mission_step(thread_id, initial_prompt, recursion_limit)
-
-        progress = self.get_progress(thread_id)
-        total_target = progress.get("total_target", 0)
-
-        while progress.get("samples_generated", 0) < total_target:
-            if max_samples is not None and progress["samples_generated"] >= max_samples:
-                print(f"Reached sample limit of {max_samples}. Ending mission.")
-                break
-
-            # Load the state
-            thread_config = {"configurable": {"thread_id": thread_id}}
-            current_state = self.app.get_state(thread_config).values
-
-            # Adjust the state for the next cycle
-            new_state = current_state.copy()
-            new_state["messages"] = []
-            new_state["decision_history"] = []
-            new_state["current_task"] = None
-            new_state["research_findings"] = []
-            new_state["fitness_report"] = None
-            new_state["last_action_agent"] = None
-            new_state["last_action_status"] = None
-
-            # Update the state in the checkpointer
-            self.app.update_state(thread_config, new_state)
-
-            # Run the next step
-            self.run_mission_step(thread_id, "continue", recursion_limit)
-
-            # Update progress for the loop condition
-            progress = self.get_progress(thread_id)
-
-    def get_progress(self, thread_id: str) -> Dict[str, Any]:
+    def _update_mission_progress(
+        self, mission_id: str, thread_id: str
+    ) -> Dict[str, Any]:
         """
-        Get the current progress of a mission.
-
-        Args:
-            thread_id: Thread ID of the mission
-
-        Returns:
-            Dictionary with progress information
+        Retrieves the final state from a cycle, updates the master mission state,
+        and persists it.
         """
-        # --- FIX: Load state directly from the checkpointer ---
         thread_config = {"configurable": {"thread_id": thread_id}}
-        state = self.app.get_state(thread_config)
+        final_cycle_state = self.app.get_state(thread_config).values
 
-        if state:
-            try:
-                # The state object from the checkpointer has a 'values' attribute
-                # which contains the actual state dictionary.
-                loaded_state = state.values
-                samples_generated = loaded_state.get("samples_generated", 0)
-                total_target = loaded_state.get("total_samples_target", 0)
+        mission_state = self.state_manager.get_mission_state(mission_id)
+        if not mission_state:
+            logging.error(
+                f"Could not retrieve mission state for {mission_id} to update progress."
+            )
+            return {}
 
-                return {
-                    "samples_generated": samples_generated,
-                    "total_target": total_target,
-                    "progress_pct": (samples_generated / total_target) * 100
-                    if total_target > 0
-                    else 0,
-                }
-            except Exception as e:
-                print(f"Error getting progress from checkpoint: {e}")
+        # Logic to determine which characteristic/topic was generated
+        current_task = final_cycle_state.get("current_task")
+        if current_task:
+            generated_characteristic = current_task.get("characteristic")
+            generated_topic = current_task.get("topic")
+        else:
+            generated_characteristic = None
+            generated_topic = None
 
-        # Default values if no state found
-        return {"samples_generated": 0, "total_target": 0, "progress_pct": 0}
+        # Update the detailed breakdown
+        if generated_characteristic and generated_topic:
+            if generated_characteristic in mission_state["progress"][mission_state["mission_name"]]:
+                mission_state["progress"][mission_state["mission_name"]][generated_characteristic]["collected"] += 1
+                if (
+                    generated_topic
+                    in mission_state["progress"][mission_state["mission_name"]][generated_characteristic][
+                        "topics"
+                    ]
+                ):
+                    mission_state["progress"][mission_state["mission_name"]][generated_characteristic][
+                        "topics"
+                    ][generated_topic]["collected"] += 1
+
+        # Update total counts
+        mission_state["samples_generated"] = final_cycle_state.get(
+            "samples_generated", mission_state["samples_generated"]
+        )
+        mission_state["synthetic_samples_generated"] = final_cycle_state.get(
+            "synthetic_samples_generated", mission_state["synthetic_samples_generated"]
+        )
+        mission_state["research_samples_generated"] = final_cycle_state.get(
+            "research_samples_generated", mission_state["research_samples_generated"]
+        )
+
+        # Update the last thread ID
+        mission_state["last_thread_id"] = thread_id
+
+        self.state_manager.update_mission_state(mission_id, mission_state)
+        logging.info(
+            f"Master state for mission {mission_id} updated after cycle {thread_id}."
+        )
+
+        return mission_state
