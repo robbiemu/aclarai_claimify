@@ -1,0 +1,66 @@
+Screen {
+    layout: vertical;
+}
+
+#stats-header {
+    height: 3;
+    background: $panel;
+    color: $text;
+    content-align: center middle;
+    border: solid $warning;
+}
+
+#main-container {
+    layout: horizontal;
+    height: 1fr;
+    background: $surface;
+    border: solid $accent;
+}
+
+#progress-panel {
+    width: 70%;
+    padding: 1;
+    border: solid $primary;
+}
+
+#mission-panel {
+    width: 30%;
+    padding: 1;
+    border: solid $secondary;
+}
+
+#conversation {
+    dock: bottom;
+    height: 12;
+    border: solid $success;
+    padding: 1;
+    background: $surface;
+}
+
+.panel-title {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+#main-progress {
+    margin: 1 0;
+}
+
+MissionSelector {
+    align: center middle;
+    layout: vertical;
+    content-align: center middle;
+}
+
+MissionSelector > Static {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+MissionSelector > Button {
+    width: 100%;
+    margin-bottom: 1;
+}

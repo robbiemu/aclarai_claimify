@@ -3,7 +3,6 @@
 Agent nodes for the Data Scout graph.
 """
 
-import pydantic
 import json
 import json_repair
 import yaml
@@ -11,7 +10,6 @@ from datetime import datetime
 import time
 from typing import Dict, List, Optional
 
-import math
 import random
 
 from langchain_litellm import ChatLiteLLM
@@ -48,8 +46,6 @@ class SupervisorDecision(BaseModel):
         None,
         description="Optional: A new task to assign if the supervisor decides to switch focus.",
     )
-
-
 
 
 def create_llm(config: ClaimifyConfig, role: str) -> ChatLiteLLM:
@@ -116,7 +112,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
 
     # --- 1. Load State ---
     progress = state.get("progress", {})
-    current_mission = state.get("current_mission", "production_corpus")
+    _current_mission = state.get("current_mission", "production_corpus")
     current_task = state.get("current_task")
 
     # --- 3. Select Next Task (if necessary) ---
@@ -169,7 +165,9 @@ def supervisor_node(state: DataScoutState) -> Dict:
 
     # If the last action was a successful archive, end the current cycle.
     if last_action_agent == "archive":
-        print("✅ Supervisor: Detected a successful archival. Ending the current cycle.")
+        print(
+            "✅ Supervisor: Detected a successful archival. Ending the current cycle."
+        )
         # Pass the full state along with the decision to end.
         return {
             "next_agent": "end",
@@ -1166,7 +1164,9 @@ def fitness_node(state: "DataScoutState") -> Dict:
 
     research_findings = state.get("research_findings", [])
     # Escape braces in research findings to prevent template errors
-    escaped_research_findings = str(research_findings).replace("{", "{{").replace("}", "}}")
+    escaped_research_findings = (
+        str(research_findings).replace("{", "{{").replace("}", "}}")
+    )
     fitness_schema = json.dumps(FitnessReport.model_json_schema(), indent=2)
 
     # Escape curly braces in the JSON schema to prevent f-string template conflicts
