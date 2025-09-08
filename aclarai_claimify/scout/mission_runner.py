@@ -5,11 +5,12 @@ This class orchestrates the mission execution and handles checkpointing for resu
 """
 
 import json
-import uuid
-from typing import Dict, Any, Optional
-import sqlite3
 import logging
 import math
+import sqlite3
+import uuid
+from typing import Dict, List, Any, Optional
+from .config import load_scout_config
 
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -96,6 +97,11 @@ class MissionRunner:
         mission_name = self.mission_config.get("name")
         target_size = self.mission_config.get("target_size", 0)
         goals = self.mission_config.get("goals", [])
+        
+        # Load scout config for writer paths
+        scout_config = load_scout_config()
+        writer_config = scout_config.get("writer", {})
+        pedigree_path = writer_config.get("audit_trail_path", "examples/PEDIGREE.md")
 
         progress = {
             mission_name: {
@@ -116,7 +122,7 @@ class MissionRunner:
             "research_samples_generated": 0,
             "progress": progress,
             "synthetic_budget": self.mission_config.get("synthetic_budget", 0.2),
-            "pedigree_path": "examples/PEDIGREE.md",
+            "pedigree_path": pedigree_path,
             "last_thread_id": None,
         }
 

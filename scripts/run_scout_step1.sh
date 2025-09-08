@@ -8,6 +8,7 @@ set -e  # Exit on any error
 # Default values
 RESUME_FROM=""
 MISSION_NAME="research_dataset" # Default mission to run
+MISSION_CONFIG="" # Default to not specifying config (uses mission_config.yaml)
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -20,6 +21,11 @@ while [[ $# -gt 0 ]]; do
         ;;
         --mission)
         MISSION_NAME="$2"
+        shift # past argument
+        shift # past value
+        ;;
+        --config)
+        MISSION_CONFIG="$2"
         shift # past argument
         shift # past value
         ;;
@@ -66,6 +72,12 @@ if [ -n "$RESUME_FROM" ]; then
 else
     echo "🚀 Starting new mission: $MISSION_NAME"
     COMMAND="$COMMAND --mission $MISSION_NAME"
+fi
+
+# Add mission config file if specified
+if [ -n "$MISSION_CONFIG" ]; then
+    echo "📋 Using mission config file: $MISSION_CONFIG"
+    COMMAND="$COMMAND --config $MISSION_CONFIG"
 fi
 
 echo "Running command: $COMMAND"

@@ -30,6 +30,7 @@ from .scout.tui.agent_output_parser import (
     ErrorMessage,
 )
 from .config import load_claimify_config
+from .scout.config import load_scout_config
 from .scout.scout_utils import get_mission_details_from_file
 
 
@@ -52,11 +53,13 @@ class DataScoutTUI(App):
         mission_plan_path: str,
         log_file: Optional[str] = None,
         debug: bool = False,
+        scout_config_path: Optional[str] = None,
     ):
         super().__init__()
         self.mission_plan_path = mission_plan_path
         self.log_file = log_file
         self.debug_enabled = debug
+        self.scout_config_path = scout_config_path
         if debug:
             print("Writing debug log to /tmp/tui_debug.log")
         self.stats = GenerationStats()
@@ -110,10 +113,8 @@ class DataScoutTUI(App):
         total_samples_target = mission_details["mission_targets"].get(mission_name, 1200)
         self.stats.target = total_samples_target
 
-        config = load_claimify_config()
-        recursion_limit = 27
-        if config.scout_agent and hasattr(config.scout_agent, "recursion_per_sample"):
-            recursion_limit = config.scout_agent.recursion_per_sample
+        scout_config = load_scout_config(self.scout_config_path)
+        recursion_limit = scout_config.get("recursion_per_sample", 27)
 
         self.agent_process_manager = AgentProcessManager(
             mission_name=mission_name,
@@ -126,7 +127,7 @@ class DataScoutTUI(App):
             self.mission_plan_path,
             mission_name,
             total_samples_target,
-            config,
+            scout_config,
         )
         self.conversation = ConversationPanel(debug=self.debug_enabled)
 
@@ -189,6 +190,8 @@ class DataScoutTUI(App):
             self.conversation.add_message("error", f"Agent error: {str(e)}")
         finally:
             self.conversation.add_message("info", "Agent process completed")
+            # Start a 5-second timer to auto-close the TUI
+            self.set_timer(5.0, self._auto_close_after_completion)
 
     def _handle_agent_event(self, event):
         """Handle events from the agent output parser."""
@@ -229,12 +232,15 @@ class DataScoutTUI(App):
                     else:
                         self.mission_panel.update_status(f"Routing to {route_name}...")
             
-            # Check for node execution patterns like "🔍 RESEARCH NODE (Verifiable Research Workflow)"
-            elif "NODE" in event.content and "🔍" in event.content:
-                node_match = re.search(r"🔍\s+(\w+)\s+NODE", event.content)
-                if node_match:
-                    node_name = node_match.group(1)
-                    self.mission_panel.update_status(f"Working on {node_name}...")
+            # Check for node execution patterns like "🔍 RESEARCH NODE" or "🎨 SYNTHETIC NODE"
+            elif ("NODE" in event.content and "🔍" in event.content) or ("SYNTHETIC NODE" in event.content and "🎨" in event.content):
+                if "🎨 SYNTHETIC NODE" in event.content:
+                    self.mission_panel.update_status("Generating Synthetic Content...")
+                else:
+                    node_match = re.search(r"🔍\s+(\w+)\s+NODE", event.content)
+                    if node_match:
+                        node_name = node_match.group(1)
+                        self.mission_panel.update_status(f"Working on {node_name}...")
             
             # Check for agent starting work (move from Initializing)
             elif ("▶ Iteration" in event.content or 
@@ -287,66 +293,105 @@ class DataScoutTUI(App):
                 pass  # Ignore errors during cleanup
         
         self.exit()
+    
+    def _auto_close_after_completion(self):
+        """Auto-close the TUI after agent process completion with a countdown."""
+        self.conversation.add_message("info", "TUI will close in 5 seconds... (Press 'q' to exit immediately)")
+        # Set another timer to actually close
+        self.set_timer(5.0, self.action_quit)
         
     def _extract_recent_sample_excerpt(self) -> str:
         """Extract a content excerpt from the most recently archived sample.
         
         Scans the entire conversation history to find the most recent
-        '## Retrieved Content (Markdown)' section and extracts content
-        between that marker and the '📝 ---  END RAW LLM RESPONSE  ---' boundary.
+        '## Retrieved Content (Markdown)' or '## Generated Content (Synthetic)' section
+        and extracts content between that marker and the end boundary.
+        
+        Supports both boundary patterns:
+        - '📝 ---  END RAW LLM RESPONSE  ---'
+        - '📝 ---  END LLM RESPONSE  ---'
         """
         try:
             # Scan the entire conversation history (not just recent messages)
             messages = self.conversation.messages
             self.debug_log(f"EXCERPT EXTRACTION: Scanning {len(messages)} total messages for content boundaries")
             
-            # Find the most recent "## Retrieved Content (Markdown)" marker
-            retrieved_content_start = -1
-            retrieved_content_message_idx = -1
+            # Find the most recent content marker (either retrieved or synthetic)
+            content_start = -1
+            content_message_idx = -1
             full_content = ""
+            content_type = "unknown"
             
-            # Search backwards through all messages to find the latest retrieved content
+            # Search backwards through all messages to find the latest content
             for i in range(len(messages) - 1, -1, -1):
                 message = messages[i]
                 content = message.get('content', '')
                 
+                # Check for retrieved content first
                 if "## Retrieved Content (Markdown)" in content:
-                    retrieved_content_start = content.find("## Retrieved Content (Markdown)")
-                    retrieved_content_message_idx = i
+                    content_start = content.find("## Retrieved Content (Markdown)")
+                    content_message_idx = i
                     full_content = content
-                    self.debug_log(f"FOUND Retrieved Content marker in message {i} at position {retrieved_content_start}")
+                    content_type = "retrieved"
+                    self.debug_log(f"FOUND Retrieved Content marker in message {i} at position {content_start}")
+                    break
+                # Also check for synthetic content
+                elif "## Generated Content (Synthetic)" in content:
+                    content_start = content.find("## Generated Content (Synthetic)")
+                    content_message_idx = i
+                    full_content = content
+                    content_type = "synthetic"
+                    self.debug_log(f"FOUND Generated Content marker in message {i} at position {content_start}")
                     break
             
-            if retrieved_content_start == -1:
-                self.debug_log("NO Retrieved Content marker found in conversation history")
+            if content_start == -1:
+                self.debug_log("NO Content marker found in conversation history")
                 return None
             
-            # Extract content from the marker onwards
-            content_after_marker = full_content[retrieved_content_start + len("## Retrieved Content (Markdown)"):]
+            # Extract content from the marker onwards (handle both types)
+            if content_type == "retrieved":
+                marker_text = "## Retrieved Content (Markdown)"
+            else:  # synthetic
+                marker_text = "## Generated Content (Synthetic)"
+            
+            content_after_marker = full_content[content_start + len(marker_text):]
             
             # Look for the end boundary in the same message or subsequent messages
-            end_boundary = "📝 ---  END RAW LLM RESPONSE  ---"
+            # Support both "END RAW LLM RESPONSE" and "END LLM RESPONSE" patterns
+            end_boundary_raw = "📝 ---  END RAW LLM RESPONSE  ---"
+            end_boundary_simple = "📝 ---  END LLM RESPONSE  ---"
             sample_content = content_after_marker
+            end_boundary = None
             
-            # Check if end boundary is in the same message
-            if end_boundary in content_after_marker:
-                # Extract content between start and end boundaries
+            # Check if either end boundary is in the same message
+            if end_boundary_raw in content_after_marker:
+                end_boundary = end_boundary_raw
                 sample_content = content_after_marker.split(end_boundary)[0]
-                self.debug_log(f"FOUND end boundary in same message, extracted {len(sample_content)} chars")
-            else:
-                # Search subsequent messages for the end boundary
+                self.debug_log(f"FOUND RAW end boundary in same message, extracted {len(sample_content)} chars")
+            elif end_boundary_simple in content_after_marker:
+                end_boundary = end_boundary_simple
+                sample_content = content_after_marker.split(end_boundary)[0]
+                self.debug_log(f"FOUND simple end boundary in same message, extracted {len(sample_content)} chars")
+            elif end_boundary is None:
+                # Search subsequent messages for either end boundary
                 self.debug_log("End boundary not in same message, searching subsequent messages")
                 accumulated_content = [content_after_marker]
                 
-                for i in range(retrieved_content_message_idx + 1, len(messages)):
+                for i in range(content_message_idx + 1, len(messages)):
                     next_message = messages[i]
                     next_content = next_message.get('content', '')
                     
-                    if end_boundary in next_content:
-                        # Found the end boundary - add content up to this point
+                    if end_boundary_raw in next_content:
+                        end_boundary = end_boundary_raw
                         content_before_boundary = next_content.split(end_boundary)[0]
                         accumulated_content.append(content_before_boundary)
-                        self.debug_log(f"FOUND end boundary in message {i}, total accumulated content")
+                        self.debug_log(f"FOUND RAW end boundary in message {i}, total accumulated content")
+                        break
+                    elif end_boundary_simple in next_content:
+                        end_boundary = end_boundary_simple
+                        content_before_boundary = next_content.split(end_boundary)[0]
+                        accumulated_content.append(content_before_boundary)
+                        self.debug_log(f"FOUND simple end boundary in message {i}, total accumulated content")
                         break
                     else:
                         # Add the entire message content to our sample
@@ -388,7 +433,7 @@ class DataScoutTUI(App):
                     self.debug_log(f"EXTRACTED cache excerpt: {excerpt[:50]}...")
                     return excerpt
                 else:
-                    return "Research sample (from cache)"
+                    return f"{content_type.title()} sample (from cache)"
             
             # Extract meaningful content lines
             lines = sample_content.split('\n')
@@ -440,6 +485,9 @@ def generate(
     debug: bool = typer.Option(
         False, "--debug", help="Enable debug logging to /tmp/tui_debug.log"
     ),
+    config: Optional[str] = typer.Option(
+        None, "--config", "-c", help="Path to mission configuration file (defaults to mission_config.yaml)"
+    ),
 ):
     """Start the Data Scout Agent TUI for sample generation."""
     mission_plan_path = mission or "settings/scout_mission.yaml"
@@ -447,7 +495,7 @@ def generate(
         typer.echo(f"❌ Mission file not found: {mission_plan_path}", err=True)
         raise typer.Exit(1)
 
-    app = DataScoutTUI(mission_plan_path=mission_plan_path, log_file=log, debug=debug)
+    app = DataScoutTUI(mission_plan_path=mission_plan_path, log_file=log, debug=debug, scout_config_path=config)
     app.run()
 
 

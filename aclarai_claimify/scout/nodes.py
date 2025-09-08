@@ -31,6 +31,7 @@ from .utils import (
 from .state import DataScoutState
 from .models import FitnessReport
 from ..config import ClaimifyConfig, load_claimify_config
+from .config import load_scout_config
 from ..data_models import ScoutAgentMissionPlanNodeConfig
 from pydantic import BaseModel, Field
 
@@ -999,6 +1000,8 @@ def archive_node(state: "DataScoutState") -> Dict:
     The archive node, responsible for saving data and updating the audit trail
     using a procedural approach.
     """
+    # Load scout config instead of main config for writer paths
+    scout_config = load_scout_config()
     config = load_claimify_config()
     llm = create_llm(config, "archive")
 
@@ -1066,9 +1069,11 @@ Respond ONLY with the Markdown content for the pedigree entry. Do NOT include an
     # Generate a unique timestamp
     timestamp = time.strftime("%Y%m%d%H%M%S")
 
-    # Construct the deterministic filepath
+    # Construct the deterministic filepath using config
     filename = f"{characteristic}_{topic}_{timestamp}.md"
-    filepath = f"output/approved_books/{filename}"
+    writer_config = scout_config.get("writer", {})
+    tier1_path = writer_config.get("tier1_path", "examples/data/datasets/tier1")
+    filepath = f"{tier1_path}/{filename}"
 
     # Now use this 'filepath' variable in the write_file tool.
     write_result = write_file.invoke(
@@ -1077,8 +1082,12 @@ Respond ONLY with the Markdown content for the pedigree entry. Do NOT include an
 
     if write_result.get("status") == "ok":
         run_id = state.get("run_id")
+        # Use pedigree path from scout config if available, otherwise from state
+        pedigree_path = state.get("pedigree_path") or writer_config.get(
+            "audit_trail_path", "examples/PEDIGREE.md"
+        )
         append_to_pedigree(
-            pedigree_path=state["pedigree_path"],
+            pedigree_path=pedigree_path,
             entry_markdown=entry_markdown,
             run_id=run_id,
         )
@@ -1318,11 +1327,22 @@ Focus on creating a book that will be a goldmine for the Copy Editor to extract 
 
     print(f"🎨 SYNTHETIC NODE: Generated response of {len(report_content)} characters")
 
+    # Log the generated content in the same format as research node for TUI display
+    # This creates a message that the TUI can parse and extract sample content from
+    display_message = AIMessage(
+        content=(
+            "      📝 --- START LLM RESPONSE ---\n"
+            f"🎨 SYNTHETIC GENERATION: Created synthetic content for {characteristic} - {topic}\n\n"
+            f"## Generated Content (Synthetic)\n\n{report_content}\n\n"
+            "      📝 ---  END LLM RESPONSE  ---"
+        )
+    )
+
     # The synthetic node bypasses fitness and routes directly to archive.
     # We must populate the state in the same way the supervisor would when routing
     # to the fitness node, so the archive node can find the content.
     return {
-        "messages": [result],
+        "messages": [display_message],  # Use display message for TUI logging
         "research_findings": [report_content],  # Pass content to the archive node
         "current_sample_provenance": "synthetic",  # Explicitly set provenance
     }

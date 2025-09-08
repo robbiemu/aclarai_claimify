@@ -22,7 +22,7 @@ except AttributeError:
 from .graph import build_graph
 from .mission_runner import MissionRunner
 from .tools import _HAVE_LIBCRAWLER
-from ..config import load_claimify_config
+from .config import load_scout_config
 
 
 def get_mission_names(mission_plan_path: str) -> list[str]:
@@ -114,6 +114,7 @@ def run_agent_process(
     recursion_limit: Optional[int] = None,
     max_samples: Optional[int] = None,
     resume_from: Optional[str] = None,
+    scout_config_path: Optional[str] = None,
 ):
     """Main function to set up and run the scout agent mission."""
     with SqliteSaver.from_conn_string(
@@ -174,18 +175,10 @@ def run_agent_process(
 
         # Determine the recursion limit for each sample generation cycle
         if recursion_limit is None:
-            config = load_claimify_config()
-            scout_config = config.scout_agent
-            if scout_config and hasattr(scout_config, "recursion_per_sample"):
-                recursion_limit = scout_config.recursion_per_sample
-                print(f"🔐 Using recursion limit from config: {recursion_limit}")
-            else:
-                # Fallback based on a generous estimate of steps for a single sample:
-                # (7 research iterations + 3 retries) * 2 (for supervisor steps) + buffer
-                recursion_limit = 27
-                print(
-                    f"🔐 Using fallback recursion limit per sample: {recursion_limit}"
-                )
+            # Load mission-specific configuration
+            scout_config = load_scout_config(scout_config_path)
+            recursion_limit = scout_config.get("recursion_per_sample", 27)
+            print(f"🔐 Using recursion limit from mission config: {recursion_limit}")
         else:
             print(f"🔐 Using CLI-provided recursion limit: {recursion_limit}")
         sys.stdout.flush()
@@ -221,18 +214,19 @@ def run(
     resume_from: Optional[str] = typer.Option(
         None, "--resume-from", help="The mission ID to resume from."
     ),
+    config: Optional[str] = typer.Option(
+        None, "--config", "-c", help="Path to mission configuration file (defaults to mission_config.yaml)."
+    ),
 ):
-    config = load_claimify_config()
-    scout_config = config.scout_agent
-    if not scout_config:
-        print("Error: `scout_agent` section not found in configuration.")
-        return
-
+    # Load mission-specific configuration instead of main claimify config
+    scout_config = load_scout_config(config)
+    
     run_agent_process(
         mission_name=mission_name,
         recursion_limit=recursion_limit,
         max_samples=max_samples,
         resume_from=resume_from,
+        scout_config_path=config,
     )
 
 
