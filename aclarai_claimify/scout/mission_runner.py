@@ -178,6 +178,48 @@ class MissionRunner:
 
         return {"results": results, "current_state": current_state}
 
+    def run_full_mission(
+        self,
+        thread_id: str,
+        initial_prompt: str,
+        recursion_limit: int,
+        max_samples: Optional[int] = None,
+    ):
+        """Runs a mission from an initial prompt until completion, managing state between cycles."""
+        # First step uses the initial prompt
+        self.run_mission_step(thread_id, initial_prompt, recursion_limit)
+
+        progress = self.get_progress(thread_id)
+        total_target = progress.get("total_target", 0)
+
+        while progress.get("samples_generated", 0) < total_target:
+            if max_samples is not None and progress["samples_generated"] >= max_samples:
+                print(f"Reached sample limit of {max_samples}. Ending mission.")
+                break
+
+            # Load the state
+            thread_config = {"configurable": {"thread_id": thread_id}}
+            current_state = self.app.get_state(thread_config).values
+
+            # Adjust the state for the next cycle
+            new_state = current_state.copy()
+            new_state["messages"] = []
+            new_state["decision_history"] = []
+            new_state["current_task"] = None
+            new_state["research_findings"] = []
+            new_state["fitness_report"] = None
+            new_state["last_action_agent"] = None
+            new_state["last_action_status"] = None
+
+            # Update the state in the checkpointer
+            self.app.update_state(thread_config, new_state)
+
+            # Run the next step
+            self.run_mission_step(thread_id, "continue", recursion_limit)
+
+            # Update progress for the loop condition
+            progress = self.get_progress(thread_id)
+
     def get_progress(self, thread_id: str) -> Dict[str, Any]:
         """
         Get the current progress of a mission.

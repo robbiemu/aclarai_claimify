@@ -467,6 +467,7 @@ class DataScoutTUI(App):
                 self.mission_name,  # Use mission_name directly
                 "--recursion-limit",
                 str(self.recursion_limit),
+                "--non-interactive",
             ]
             if self.resume_from:
                 command.extend(["--resume-from", self.resume_from])

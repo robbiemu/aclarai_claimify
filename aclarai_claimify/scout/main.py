@@ -119,6 +119,7 @@ def run_agent_process(
     max_iterations: Optional[int] = None,
     recursion_limit: Optional[int] = None,
     resume_from: Optional[str] = None,
+    non_interactive: bool = False,
 ):
     """Main function to run the CLI interactive loop for the scout agent."""
     with SqliteSaver.from_conn_string(
@@ -199,124 +200,134 @@ def run_agent_process(
                     f"🤖 \033[92mData Scout Agent is ready. Starting new thread: {thread_id}\033[0m"
                 )
 
-            iteration_count = 0
-            # Convert max_iterations to int if it's a mock or other non-int type
-            if max_iterations is not None:
-                try:
-                    max_iterations = int(max_iterations)
-                except (ValueError, TypeError):
-                    max_iterations = None
+            if non_interactive:
+                # Non-interactive path for TUI
+                initial_prompt = sys.stdin.readline().strip()
+                if initial_prompt:
+                    mission_runner.run_full_mission(thread_id, initial_prompt, recursion_limit)
+                else:
+                    print("Error: Non-interactive mode requires an initial prompt via stdin.")
+            else:
+                # Keep the existing interactive loop for debugging
+                # This loop calls mission_runner.run_mission_step() on each iteration
+                iteration_count = 0
+                # Convert max_iterations to int if it's a mock or other non-int type
+                if max_iterations is not None:
+                    try:
+                        max_iterations = int(max_iterations)
+                    except (ValueError, TypeError):
+                        max_iterations = None
 
-            while max_iterations is None or iteration_count < max_iterations:
-                try:
-                    # Show progress before prompt
-                    progress_info = mission_runner.get_progress(thread_id)
-                    samples_generated = progress_info["samples_generated"]
-                    total_target = progress_info["total_target"]
-                    progress_pct = progress_info["progress_pct"]
+                while max_iterations is None or iteration_count < max_iterations:
+                    try:
+                        # Show progress before prompt
+                        progress_info = mission_runner.get_progress(thread_id)
+                        samples_generated = progress_info["samples_generated"]
+                        total_target = progress_info["total_target"]
+                        progress_pct = progress_info["progress_pct"]
 
-                    if total_target > 0:
-                        progress_display = f"\r📊 Progress: {samples_generated}/{total_target} samples ({progress_pct:.1f}%)"
-                    else:
-                        progress_display = "\r📊 Progress: Calculating..."
+                        if total_target > 0:
+                            progress_display = f"\r📊 Progress: {samples_generated}/{total_target} samples ({progress_pct:.1f}%)"
+                        else:
+                            progress_display = "\r📊 Progress: Calculating..."
 
-                    # Clear line and show progress
-                    print(progress_display, end="", flush=True)
-                    user_input = input(">>")
-                    if user_input.lower() in ["exit", "quit"]:
-                        print("Exiting...")
-                        break
+                        # Clear line and show progress
+                        print(progress_display, end="", flush=True)
+                        user_input = input(">>")
+                        if user_input.lower() in ["exit", "quit"]:
+                            print("Exiting...")
+                            break
 
-                    # Run mission step
-                    step_result = mission_runner.run_mission_step(
-                        thread_id, user_input, recursion_limit
-                    )
+                        # Run mission step
+                        step_result = mission_runner.run_mission_step(
+                            thread_id, user_input, recursion_limit
+                        )
 
-                    # Display results
-                    for result in step_result["results"]:
-                        node_name = result["node_name"]
-                        node_output = result["node_output"]
+                        # Display results
+                        for result in step_result["results"]:
+                            node_name = result["node_name"]
+                            node_output = result["node_output"]
 
-                        if node_name == "__end__":
-                            # Clear progress line before showing final message
+                            if node_name == "__end__":
+                                # Clear progress line before showing final message
+                                print("\033[K", end="")
+                                print("\n🏁 \033[92mAgent has finished the task.\033[0m")
+                                continue
+
+                            # Clear progress line before showing node execution
                             print("\033[K", end="")
-                            print("\n🏁 \033[92mAgent has finished the task.\033[0m")
-                            continue
-
-                        # Clear progress line before showing node execution
-                        print("\033[K", end="")
-                        print(f"\033[1m-> Executing Node: {node_name.upper()}\033[0m")
-                        sys.stdout.flush()
-                        if "messages" in node_output:
-                            messages = node_output["messages"]
-                            if messages:  # Check if messages list is not empty
-                                message = messages[-1]
-                                if (
-                                    hasattr(message, "tool_calls")
-                                    and message.tool_calls
-                                ):
-                                    # Debug the structure of tool_calls
-                                    try:
-                                        tool_calls_str = ", ".join(
-                                            [
-                                                f"{tc['name']}(...)"
-                                                for tc in message.tool_calls
-                                            ]
-                                        )
-                                        print(
-                                            f"   - \033[94mDecided to call tools\033[0m: {tool_calls_str}"
-                                        )
-                                    except (TypeError, KeyError) as _e:
-                                        # Handle case where tc is not a dict with 'name' key
-                                        tool_calls_info = []
-                                        for tc in message.tool_calls:
-                                            if isinstance(tc, dict) and "name" in tc:
-                                                tool_calls_info.append(
+                            print(f"\033[1m-> Executing Node: {node_name.upper()}\033[0m")
+                            sys.stdout.flush()
+                            if "messages" in node_output:
+                                messages = node_output["messages"]
+                                if messages:  # Check if messages list is not empty
+                                    message = messages[-1]
+                                    if (
+                                        hasattr(message, "tool_calls")
+                                        and message.tool_calls
+                                    ):
+                                        # Debug the structure of tool_calls
+                                        try:
+                                            tool_calls_str = ", ".join(
+                                                [
                                                     f"{tc['name']}(...)"
-                                                )
-                                            else:
-                                                tool_calls_info.append(
-                                                    f"{type(tc).__name__}(...)"
-                                                )
+                                                    for tc in message.tool_calls
+                                                ]
+                                            )
+                                            print(
+                                                f"   - \033[94mDecided to call tools\033[0m: {tool_calls_str}"
+                                            )
+                                        except (TypeError, KeyError) as _e:
+                                            # Handle case where tc is not a dict with 'name' key
+                                            tool_calls_info = []
+                                            for tc in message.tool_calls:
+                                                if isinstance(tc, dict) and "name" in tc:
+                                                    tool_calls_info.append(
+                                                        f"{tc['name']}(...)"
+                                                    )
+                                                else:
+                                                    tool_calls_info.append(
+                                                        f"{type(tc).__name__}(...)"
+                                                    )
+                                            print(
+                                                f"   - \033[94mDecided to call tools\033[0m: {', '.join(tool_calls_info)}"
+                                            )
+                                    else:
                                         print(
-                                            f"   - \033[94mDecided to call tools\033[0m: {', '.join(tool_calls_info)}"
+                                            f"   - \033[92mResponded\033[0m: {message.content}"
                                         )
                                 else:
-                                    print(
-                                        f"   - \033[92mResponded\033[0m: {message.content}"
-                                    )
+                                    print("   - \033[90mNo messages in response\033[0m")
                             else:
-                                print("   - \033[90mNo messages in response\033[0m")
-                        else:
+                                print(
+                                    f"   - \033[90mOutput: {str(node_output)[:300]}...\033[0m"
+                                )
+                            print("-" * 30)
+
+                        iteration_count += 1
+
+                    except KeyboardInterrupt:
+                        # Show final progress on interrupt
+                        progress_info = mission_runner.get_progress(thread_id)
+                        samples_generated = progress_info["samples_generated"]
+                        total_target = progress_info["total_target"]
+                        progress_pct = progress_info["progress_pct"]
+
+                        if total_target > 0:
                             print(
-                                f"   - \033[90mOutput: {str(node_output)[:300]}...\033[0m"
+                                f"\r📊 Final Progress: {samples_generated}/{total_target} samples ({progress_pct:.1f}%)"
                             )
-                        print("-" * 30)
+                        else:
+                            print(f"\r📊 Final Progress: {samples_generated} samples")
+                        print("\nExiting...")
+                        break
+                    except Exception as e:
+                        import traceback
 
-                    iteration_count += 1
-
-                except KeyboardInterrupt:
-                    # Show final progress on interrupt
-                    progress_info = mission_runner.get_progress(thread_id)
-                    samples_generated = progress_info["samples_generated"]
-                    total_target = progress_info["total_target"]
-                    progress_pct = progress_info["progress_pct"]
-
-                    if total_target > 0:
-                        print(
-                            f"\r📊 Final Progress: {samples_generated}/{total_target} samples ({progress_pct:.1f}%)"
-                        )
-                    else:
-                        print(f"\r📊 Final Progress: {samples_generated} samples")
-                    print("\nExiting...")
-                    break
-                except Exception as e:
-                    import traceback
-
-                    print(f"\n\033[91mAn error occurred: {e}\033[0m")
-                    print(f"Error type: {type(e).__name__}")
-                    print(f"Traceback: {traceback.format_exc()}")
-                    print("Please try again.")
+                        print(f"\n\033[91mAn error occurred: {e}\033[0m")
+                        print(f"Error type: {type(e).__name__}")
+                        print(f"Traceback: {traceback.format_exc()}")
+                        print("Please try again.")
         finally:
             print("\nConnection closed")
 
@@ -332,6 +343,7 @@ def run(
     resume_from: Optional[str] = typer.Option(
         None, "--resume-from", help="The thread ID to resume from."
     ),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Run in non-interactive mode for automated execution."),
 ):
     config = load_claimify_config()
     scout_config = config.scout_agent
@@ -344,6 +356,7 @@ def run(
         max_iterations=max_iterations,
         recursion_limit=recursion_limit,
         resume_from=resume_from,
+        non_interactive=non_interactive,
     )
 
 

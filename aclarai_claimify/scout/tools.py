@@ -41,7 +41,6 @@ RATE_MANAGER = AsyncRateLimitManager()
 HTTP_CLIENT = httpx.AsyncClient()
 
 
-# Event loop management utilities
 def _ensure_event_loop():
     """Ensure we have a running event loop, create one if needed."""
     try:
@@ -476,13 +475,16 @@ def _safe_request_get(
             if attempt < max_retries:
                 regular_backoff = backoff * (2**attempt)
                 error_type = type(e).__name__
+                error_message = str(e)
                 print(
-                    f"      ⚠️ {error_type} for {url}, retrying in {regular_backoff:.1f}s"
+                    f"      ⚠️ {error_type} for {url}: {error_message}, retrying in {regular_backoff:.1f}s"
                 )
                 time.sleep(regular_backoff)
             else:
+                error_type = type(e).__name__
+                error_message = str(e)
                 print(
-                    f"      ❌ {type(e).__name__} for {url} after {max_retries + 1} attempts"
+                    f"      ❌ {error_type} for {url} after {max_retries + 1} attempts: {error_message}"
                 )
                 raise
 
