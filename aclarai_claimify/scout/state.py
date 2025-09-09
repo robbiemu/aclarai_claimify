@@ -2,7 +2,7 @@
 """
 Defines the overall state for the Data Scout agent graph.
 """
-from typing import TypedDict, List, Dict, Optional, Annotated
+from typing import TypedDict, List, Dict, Optional, Annotated, Any
 from langgraph.graph.message import add_messages
 
 # Import the new model
@@ -35,7 +35,14 @@ class DataScoutState(TypedDict):
         last_action_agent: The name of the last agent that took action.
         synthetic_budget: The maximum allowed percentage of synthetic samples (0.0-1.0).
         fitness_report: A structured report from the FitnessAgent evaluating a source document.
+        current_sample_provenance: The provenance type of the current sample ('researched', 'synthetic', 'unknown').
         task_history: A list of (characteristic, topic, failure_reason) tuples.
+        excluded_urls: A list of URLs that have already been used for samples.
+        cached_only_mode: Flag indicating if the agent should only use cached data.
+        no_search_tools: Flag indicating if search tools are disabled.
+        allowed_url_whitelist: List of URLs that are allowed to be used in cached-only mode.
+        cached_exhausted: Flag indicating if all cached data has been exhausted.
+        next_cycle_cached_reuse: Plan for next cycle's cached reuse behavior.
     """
     messages: Annotated[list, add_messages]
     run_id: str
@@ -58,4 +65,11 @@ class DataScoutState(TypedDict):
     last_action_agent: str
     synthetic_budget: float
     fitness_report: Optional[FitnessReport]
+    current_sample_provenance: Optional[str]
     task_history: List[tuple[str, str, str]]
+    excluded_urls: List[str]
+    cached_only_mode: bool
+    no_search_tools: bool
+    allowed_url_whitelist: List[str]
+    cached_exhausted: bool
+    next_cycle_cached_reuse: Optional[Dict[str, Any]]

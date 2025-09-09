@@ -18,16 +18,14 @@ class ConversationPanel(Log):
     def add_message(self, role: str, content: str):
         """Add a message to the conversation log with role-based coloring."""
         # Store the message for later extraction
-        self.messages.append({
-            'role': role,
-            'content': content,
-            'timestamp': datetime.now()
-        })
-        
+        self.messages.append(
+            {"role": role, "content": content, "timestamp": datetime.now()}
+        )
+
         # Keep only the last 50 messages to avoid memory issues
         if len(self.messages) > 50:
             self.messages = self.messages[-50:]
-        
+
         # Clear placeholder on first real message
         if not self._initialized:
             self.clear()
@@ -35,14 +33,14 @@ class ConversationPanel(Log):
 
         colors = {
             "system": "bright_black",
-            "user": "cyan", 
+            "user": "cyan",
             "assistant": "green",
             "tool": "yellow",
             "debug": "magenta",
             "info": "blue",
             "error": "red",
         }
-        color = colors.get(role, "white")
+        _color = colors.get(role, "white")
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         # Use plain text without markup to avoid rendering issues

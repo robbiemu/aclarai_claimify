@@ -124,6 +124,8 @@ class MissionRunner:
             "synthetic_budget": self.mission_config.get("synthetic_budget", 0.2),
             "pedigree_path": pedigree_path,
             "last_thread_id": None,
+            "excluded_urls": [],
+            "next_cycle_cached_reuse": {"active": False},
         }
 
     def run_mission(
@@ -186,7 +188,11 @@ class MissionRunner:
         self, mission_id: str, thread_id: str, mission_state: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Creates the initial state for a single agent cycle."""
-        return {
+        # Check if we should enter cached-only mode
+        carryover = mission_state.get("next_cycle_cached_reuse", {"active": False})
+        is_cached_reuse = carryover.get("active", False)
+        
+        base_state = {
             "run_id": thread_id,
             "mission_id": mission_id,
             "messages": [],
@@ -206,7 +212,33 @@ class MissionRunner:
             "pedigree_path": mission_state.get("pedigree_path"),
             "samples_generated": mission_state.get("samples_generated", 0),
             "progress": mission_state.get("progress", {}),
+            # Always seed excluded URLs
+            "excluded_urls": mission_state.get("excluded_urls", []),
+            # Carry over sample counters
+            "synthetic_samples_generated": mission_state.get("synthetic_samples_generated", 0),
+            "research_samples_generated": mission_state.get("research_samples_generated", 0),
         }
+        
+        if is_cached_reuse:
+            # Enter cached-only mode
+            base_state.update({
+                "cached_only_mode": True,
+                "no_search_tools": True,
+                "allowed_url_whitelist": carryover.get("allowed_url_whitelist", []),
+                "current_task": carryover.get("current_task"),
+                "research_session_cache": carryover.get("research_session_cache", []),
+                "cached_exhausted": False,
+            })
+        else:
+            # Normal mode
+            base_state.update({
+                "cached_only_mode": False,
+                "no_search_tools": False,
+                "allowed_url_whitelist": [],
+                "cached_exhausted": False,
+            })
+            
+        return base_state
 
     def run_full_cycle(self, thread_id: str, recursion_limit: int):
         """Runs the agent for a single cycle with a given thread_id."""
@@ -277,6 +309,18 @@ class MissionRunner:
 
         # Update the last thread ID
         mission_state["last_thread_id"] = thread_id
+        
+        # Persist cached reuse state
+        mission_state["excluded_urls"] = final_cycle_state.get(
+            "excluded_urls", mission_state.get("excluded_urls", [])
+        )
+        mission_state["next_cycle_cached_reuse"] = final_cycle_state.get(
+            "next_cycle_cached_reuse", {"active": False}
+        )
+        
+        # If cached is exhausted or quotas reached, force carryover inactive
+        if final_cycle_state.get("cached_exhausted"):
+            mission_state["next_cycle_cached_reuse"] = {"active": False}
 
         self.state_manager.update_mission_state(mission_id, mission_state)
         logging.info(

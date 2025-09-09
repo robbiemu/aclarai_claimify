@@ -111,6 +111,105 @@ def supervisor_node(state: DataScoutState) -> Dict:
     config = load_claimify_config()
     llm = create_llm(config, "supervisor")
 
+    # --- CACHED-ONLY MODE CHECK ---
+    # If we're in cached-only mode, deterministically route to research without LLM consultation
+    if state.get("cached_only_mode"):
+        print(
+            "🔁 Supervisor: In cached-only mode. Checking quotas and routing deterministically."
+        )
+
+        current_task = state.get("current_task")
+        progress = state.get("progress", {})
+
+        # Verify quotas again
+        if not needs_more_for_current_pair(progress, current_task, pending_increment=0):
+            print(
+                f"   📊 Supervisor: Quota satisfied for cached mode. Setting exhausted flag."
+            )
+            return {
+                "next_agent": "end",
+                "progress": progress,
+                "current_task": current_task,
+                "strategy_block": state.get("strategy_block", ""),
+                "cached_exhausted": True,
+                "next_cycle_cached_reuse": {"active": False},
+                "decision_history": state.get("decision_history", []) + ["end"],
+                "excluded_urls": state.get("excluded_urls", []),
+                "tool_execution_failures": state.get("tool_execution_failures", 0),
+                "research_attempts": state.get("research_attempts", 0),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "last_action_status": "success",
+                "last_action_agent": "supervisor",
+                "synthetic_samples_generated": state.get(
+                    "synthetic_samples_generated", 0
+                ),
+                "research_samples_generated": state.get(
+                    "research_samples_generated", 0
+                ),
+                "synthetic_budget": state.get("synthetic_budget", 0.2),
+                "fitness_report": None,
+            }
+
+        # Check if we have any allowed URLs left
+        allowed = set(state.get("allowed_url_whitelist", [])) - set(
+            state.get("excluded_urls", [])
+        )
+        if not allowed:
+            print(
+                f"   🚫 Supervisor: No allowed URLs remaining in cached mode. Setting exhausted flag."
+            )
+            return {
+                "next_agent": "end",
+                "progress": progress,
+                "current_task": current_task,
+                "strategy_block": state.get("strategy_block", ""),
+                "cached_exhausted": True,
+                "next_cycle_cached_reuse": {"active": False},
+                "decision_history": state.get("decision_history", []) + ["end"],
+                "excluded_urls": state.get("excluded_urls", []),
+                "tool_execution_failures": state.get("tool_execution_failures", 0),
+                "research_attempts": state.get("research_attempts", 0),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "last_action_status": "success",
+                "last_action_agent": "supervisor",
+                "synthetic_samples_generated": state.get(
+                    "synthetic_samples_generated", 0
+                ),
+                "research_samples_generated": state.get(
+                    "research_samples_generated", 0
+                ),
+                "synthetic_budget": state.get("synthetic_budget", 0.2),
+                "fitness_report": None,
+            }
+
+        # Deterministically route to research for cached-only processing
+        print(
+            f"   🎯 Supervisor: Routing to research in cached-only mode with {len(allowed)} allowed URLs."
+        )
+        return {
+            "next_agent": "research",
+            "progress": progress,
+            "current_task": current_task,
+            "strategy_block": state.get("strategy_block", ""),
+            "decision_history": state.get("decision_history", []) + ["research"],
+            "excluded_urls": state.get("excluded_urls", []),
+            "tool_execution_failures": state.get("tool_execution_failures", 0),
+            "research_attempts": state.get("research_attempts", 0) + 1,
+            "consecutive_failures": state.get("consecutive_failures", 0),
+            "last_action_status": "success",
+            "last_action_agent": "supervisor",
+            "synthetic_samples_generated": state.get("synthetic_samples_generated", 0),
+            "research_samples_generated": state.get("research_samples_generated", 0),
+            "synthetic_budget": state.get("synthetic_budget", 0.2),
+            "fitness_report": None,
+            # Preserve cached-only mode state
+            "cached_only_mode": True,
+            "no_search_tools": True,
+            "allowed_url_whitelist": list(allowed),
+            "cached_exhausted": False,
+            "next_cycle_cached_reuse": state.get("next_cycle_cached_reuse"),
+        }
+
     # --- 1. Load State ---
     progress = state.get("progress", {})
     _current_mission = state.get("current_mission", "production_corpus")
@@ -164,18 +263,213 @@ def supervisor_node(state: DataScoutState) -> Dict:
     last_action_status = state.get("last_action_status", "success")
     last_action_agent = state.get("last_action_agent", "")
 
-    # If the last action was a successful archive, end the current cycle.
+    # If the last action was a successful archive, evaluate for cached reuse.
     if last_action_agent == "archive":
         print(
-            "✅ Supervisor: Detected a successful archival. Ending the current cycle."
+            "✅ Supervisor: Detected a successful archival. Evaluating for cached reuse."
         )
-        # Pass the full state along with the decision to end.
+
+        # 1) Update exclusions
+        research_findings = state.get("research_findings", [])
+        used_urls = extract_used_urls_from_findings(research_findings)
+        current_excluded = state.get("excluded_urls", [])
+        # Normalize and deduplicate URLs
+        all_excluded = list(
+            set([normalize_url(url) for url in current_excluded + used_urls])
+        )
+
+        print(
+            f"   📝 Supervisor: Adding {len(used_urls)} URLs to exclusion list. Total excluded: {len(all_excluded)}"
+        )
+
+        # 2) Check provenance and quota
+        provenance = state.get("current_sample_provenance", "unknown")
+        if provenance != "researched":
+            print(
+                f"   ⚠️  Supervisor: Sample provenance '{provenance}' != 'researched'. Skipping cached reuse."
+            )
+            return {
+                "next_agent": "end",
+                "progress": state.get("progress", {}),
+                "current_task": state.get("current_task"),
+                "strategy_block": state.get("strategy_block", ""),
+                "decision_history": state.get("decision_history", []) + ["end"],
+                "excluded_urls": all_excluded,
+                "next_cycle_cached_reuse": {"active": False},
+                "tool_execution_failures": state.get("tool_execution_failures", 0),
+                "research_attempts": state.get("research_attempts", 0),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "last_action_status": "success",
+                "last_action_agent": "supervisor",
+                "synthetic_samples_generated": state.get(
+                    "synthetic_samples_generated", 0
+                ),
+                "research_samples_generated": state.get(
+                    "research_samples_generated", 0
+                ),
+                "synthetic_budget": state.get("synthetic_budget", 0.2),
+                "fitness_report": None,
+            }
+
+        # Check if we need more samples for this characteristic/topic pair
+        if not needs_more_for_current_pair(
+            state.get("progress", {}), next_task, pending_increment=1
+        ):
+            print(
+                f"   📊 Supervisor: Quota satisfied for {next_task.get('characteristic', 'N/A')}/{next_task.get('topic', 'N/A')}. Ending cycle."
+            )
+            return {
+                "next_agent": "end",
+                "progress": state.get("progress", {}),
+                "current_task": state.get("current_task"),
+                "strategy_block": state.get("strategy_block", ""),
+                "decision_history": state.get("decision_history", []) + ["end"],
+                "excluded_urls": all_excluded,
+                "next_cycle_cached_reuse": {"active": False},
+                "tool_execution_failures": state.get("tool_execution_failures", 0),
+                "research_attempts": state.get("research_attempts", 0),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "last_action_status": "success",
+                "last_action_agent": "supervisor",
+                "synthetic_samples_generated": state.get(
+                    "synthetic_samples_generated", 0
+                ),
+                "research_samples_generated": state.get(
+                    "research_samples_generated", 0
+                ),
+                "synthetic_budget": state.get("synthetic_budget", 0.2),
+                "fitness_report": None,
+            }
+
+        # 3) Build candidate cache index
+        cache_index = index_research_cache(state.get("research_session_cache", []))
+        # Filter to exclude already used URLs
+        excluded_set = set(all_excluded)
+        available_candidates = [
+            entry for entry in cache_index if entry["url"] not in excluded_set
+        ]
+
+        print(
+            f"   🗂️  Supervisor: Found {len(available_candidates)} unused cached sources"
+        )
+
+        if not available_candidates:
+            print("   📭 Supervisor: No unused cached sources available. Ending cycle.")
+            return {
+                "next_agent": "end",
+                "progress": state.get("progress", {}),
+                "current_task": state.get("current_task"),
+                "strategy_block": state.get("strategy_block", ""),
+                "decision_history": state.get("decision_history", []) + ["end"],
+                "excluded_urls": all_excluded,
+                "next_cycle_cached_reuse": {"active": False},
+                "tool_execution_failures": state.get("tool_execution_failures", 0),
+                "research_attempts": state.get("research_attempts", 0),
+                "consecutive_failures": state.get("consecutive_failures", 0),
+                "last_action_status": "success",
+                "last_action_agent": "supervisor",
+                "synthetic_samples_generated": state.get(
+                    "synthetic_samples_generated", 0
+                ),
+                "research_samples_generated": state.get(
+                    "research_samples_generated", 0
+                ),
+                "synthetic_budget": state.get("synthetic_budget", 0.2),
+                "fitness_report": None,
+            }
+
+        # 4) Let LLM select cached sources
+        print(
+            f"   🤖 Supervisor: Asking LLM to evaluate {len(available_candidates)} cached sources..."
+        )
+
+        # Get synthetic budget info for LLM context
+        synthetic_samples_generated = state.get("synthetic_samples_generated", 0)
+        research_samples_generated = state.get("research_samples_generated", 0)
+        total_samples_generated = (
+            synthetic_samples_generated + research_samples_generated
+        )
+        synthetic_budget = state.get("synthetic_budget", 0.2)
+
+        # Calculate total target from progress
+        total_samples_target = 0
+        progress = state.get("progress", {})
+        if progress:
+            mission_name = list(progress.keys())[0]
+            for char_data in progress[mission_name].values():
+                total_samples_target += char_data["target"]
+
+        decision, selected_urls, rationale = llm_select_cached_sources(
+            llm=llm,
+            characteristic=characteristic,
+            topic=topic,
+            strategy_block=strategy_block,
+            excluded_urls=all_excluded,
+            cache_index=available_candidates,
+            synthetic_samples_generated=synthetic_samples_generated,
+            total_samples_generated=total_samples_generated,
+            synthetic_budget=synthetic_budget,
+            total_samples_target=total_samples_target,
+        )
+
+        print(
+            f"   🎯 Supervisor: LLM decision='{decision}', selected={len(selected_urls)} URLs"
+        )
+        print(f"   💭 Supervisor: Rationale: {rationale}")
+
+        if decision == "reuse_cached" and selected_urls:
+            # Final validation: ensure selected URLs are not in excluded list
+            final_selected = [
+                url for url in selected_urls if normalize_url(url) not in excluded_set
+            ]
+
+            if final_selected:
+                # Build carryover plan
+                carryover_plan = {
+                    "active": True,
+                    "allowed_url_whitelist": final_selected,
+                    "current_task": next_task,
+                    "research_session_cache": state.get("research_session_cache", []),
+                    "rationale": rationale,
+                }
+
+                print(
+                    f"   ✅ Supervisor: Scheduling cached reuse with {len(final_selected)} sources for next cycle"
+                )
+
+                return {
+                    "next_agent": "end",
+                    "progress": state.get("progress", {}),
+                    "current_task": state.get("current_task"),
+                    "strategy_block": state.get("strategy_block", ""),
+                    "decision_history": state.get("decision_history", []) + ["end"],
+                    "excluded_urls": all_excluded,
+                    "next_cycle_cached_reuse": carryover_plan,
+                    "tool_execution_failures": state.get("tool_execution_failures", 0),
+                    "research_attempts": state.get("research_attempts", 0),
+                    "consecutive_failures": state.get("consecutive_failures", 0),
+                    "last_action_status": "success",
+                    "last_action_agent": "supervisor",
+                    "synthetic_samples_generated": state.get(
+                        "synthetic_samples_generated", 0
+                    ),
+                    "research_samples_generated": state.get(
+                        "research_samples_generated", 0
+                    ),
+                    "synthetic_budget": state.get("synthetic_budget", 0.2),
+                    "fitness_report": None,
+                }
+
+        # Default: no cached reuse
+        print("   📋 Supervisor: No cached reuse planned. Ending cycle normally.")
         return {
             "next_agent": "end",
             "progress": state.get("progress", {}),
             "current_task": state.get("current_task"),
             "strategy_block": state.get("strategy_block", ""),
-            "decision_history": state.get("decision_history", []),
+            "decision_history": state.get("decision_history", []) + ["end"],
+            "excluded_urls": all_excluded,
+            "next_cycle_cached_reuse": {"active": False},
             "tool_execution_failures": state.get("tool_execution_failures", 0),
             "research_attempts": state.get("research_attempts", 0),
             "consecutive_failures": state.get("consecutive_failures", 0),
@@ -232,6 +526,9 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 "research_samples_generated": research_samples_generated,
                 "synthetic_budget": synthetic_budget,
                 "research_findings": state.get("research_findings", []),
+                "current_sample_provenance": state.get(
+                    "current_sample_provenance", "unknown"
+                ),  # Pass through provenance
             }
         else:
             print(
@@ -287,11 +584,102 @@ def supervisor_node(state: DataScoutState) -> Dict:
             # We will now fall through to the standard supervisor prompt, but with the special failure guidance.
 
     last_message_content = str(messages[-1].content) if messages else ""
+
+    # --- SENTINEL AND WHITELIST ENFORCEMENT ---
+    # Check for "No More Cached Data" sentinel from research
+    if (
+        decision_history
+        and decision_history[-1] == "research"
+        and (
+            "# No More Cached Data" in last_message_content
+            or "NO_MORE_CACHED_DATA" in last_message_content
+        )
+    ):
+        print(
+            "📋 Supervisor: Research signaled 'No More Cached Data'. Setting exhausted flag and ending cycle."
+        )
+        return {
+            "next_agent": "end",
+            "progress": progress,
+            "current_task": next_task,
+            "strategy_block": strategy_block,
+            "decision_history": decision_history + ["end"],
+            "excluded_urls": state.get("excluded_urls", []),
+            "cached_exhausted": True,
+            "next_cycle_cached_reuse": {"active": False},
+            "tool_execution_failures": tool_execution_failures,
+            "research_attempts": research_attempts,
+            "consecutive_failures": consecutive_failures,
+            "last_action_status": "success",
+            "last_action_agent": "supervisor",
+            "synthetic_samples_generated": synthetic_samples_generated,
+            "research_samples_generated": research_samples_generated,
+            "synthetic_budget": synthetic_budget,
+            "fitness_report": None,
+        }
+
+    # Check for Data Prospecting Report and enforce whitelist in cached-only mode
     if (
         decision_history
         and decision_history[-1] == "research"
         and "# Data Prospecting Report" in last_message_content
     ):
+        # If we're in cached-only mode, enforce whitelist before routing to fitness
+        is_cached_mode = state.get("cached_only_mode") or state.get("no_search_tools")
+        if is_cached_mode:
+            print(
+                "🛂 Supervisor: In cached-only mode. Enforcing URL whitelist before routing to fitness."
+            )
+
+            # Extract URL from the report
+            report_url = None
+            for line in last_message_content.split("\n"):
+                if "**Source URL**:" in line:
+                    try:
+                        parts = line.split("`")
+                        if len(parts) > 1:
+                            report_url = parts[1].strip()
+                    except Exception:
+                        pass
+                    break
+
+            if report_url:
+                # Check if URL is in whitelist and not in excluded list
+                allowed = set(state.get("allowed_url_whitelist", [])) - set(
+                    state.get("excluded_urls", [])
+                )
+                normalized_report_url = normalize_url(report_url)
+
+                if normalized_report_url not in {normalize_url(url) for url in allowed}:
+                    print(
+                        f"⚠️  Supervisor: URL '{report_url}' not in allowed whitelist. Treating as violation."
+                    )
+                    print(f"   Allowed URLs: {list(allowed)}")
+                    return {
+                        "next_agent": "end",
+                        "progress": progress,
+                        "current_task": next_task,
+                        "strategy_block": strategy_block,
+                        "decision_history": decision_history + ["end"],
+                        "excluded_urls": state.get("excluded_urls", []),
+                        "cached_exhausted": True,
+                        "next_cycle_cached_reuse": {"active": False},
+                        "tool_execution_failures": tool_execution_failures,
+                        "research_attempts": research_attempts,
+                        "consecutive_failures": consecutive_failures,
+                        "last_action_status": "success",
+                        "last_action_agent": "supervisor",
+                        "synthetic_samples_generated": synthetic_samples_generated,
+                        "research_samples_generated": research_samples_generated,
+                        "synthetic_budget": synthetic_budget,
+                        "fitness_report": None,
+                    }
+                else:
+                    print(
+                        f"✅ Supervisor: URL '{report_url}' is in whitelist. Proceeding to fitness."
+                    )
+
+        # Continue with normal Data Prospecting Report processing
         print(
             "✅ Supervisor: Detected a completed 'Data Prospecting Report'. Deterministically routing to 'fitness'."
         )
@@ -372,13 +760,14 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 "ℹ️ Supervisor: No source URL or research cache found, defaulting provenance to 'synthetic'."
             )
 
+
         return {
             "next_agent": "fitness",
             "decision_history": decision_history + ["fitness"],
             "consecutive_failures": 0,
             "last_action_status": "success",
             "last_action_agent": "supervisor",
-            "current_sample_provenance": provenance,
+            "current_sample_provenance": provenance,  # Pass through provenance from state
             "progress": progress,
             "current_task": next_task,
             "strategy_block": strategy_block,
@@ -413,21 +802,54 @@ Available Agents:
             total_samples_target += char_data["target"]
 
     max_synthetic_samples = int(total_samples_target * synthetic_budget)
-    synthetic_status = f"{synthetic_samples_generated} of a target {max_synthetic_samples} (Budget: {synthetic_budget:.0%})"
+    remaining_synthetic_budget = max_synthetic_samples - synthetic_samples_generated
+    remaining_total_work = total_samples_target - total_samples_generated
+    current_synthetic_pct = (
+        (synthetic_samples_generated / total_samples_generated)
+        if total_samples_generated > 0
+        else 0.0
+    )
+    research_success_rate = (
+        "high"
+        if consecutive_failures < 2 and research_attempts < 3
+        else "moderate"
+        if consecutive_failures < 4
+        else "low"
+    )
+
+    # More integrated status summary
+    progress_pct = (
+        (total_samples_generated / total_samples_target) * 100
+        if total_samples_target > 0
+        else 0
+    )
+    mission_status = f"{total_samples_generated}/{total_samples_target} samples ({progress_pct:.0f}%) | {current_synthetic_pct:.0%} synthetic | {research_success_rate} research success"
 
     strategic_guidance = f"""
 **4. Strategic Reasoning Guidance:**
-Your goal is to guide the team to produce a final corpus of approximately {total_samples_target} samples, of which roughly {max_synthetic_samples} should be synthetic.
+Your primary goal is generating high-quality samples efficiently. Consider both task requirements and resource management:
 
-When deciding between `research` and `synthetic`, you must manage the synthetic budget thoughtfully:
-- **Current Status**: You have generated **{synthetic_samples_generated} synthetic samples** out of {total_samples_generated} total samples so far.
-- **Mission Target**: Your mission allows for up to **{max_synthetic_samples} synthetic samples** out of {total_samples_target} total samples.
-- **Remaining Budget**: You still have **{max_synthetic_samples - synthetic_samples_generated} synthetic samples** available in your budget.
-- **Remaining Work**: You need to generate **{total_samples_target - total_samples_generated} more samples** to complete the mission.
+**Mission Progress:**
+- **Generated**: {total_samples_generated}/{total_samples_target} samples ({progress_pct:.0f}% complete)
+- **Breakdown**: {synthetic_samples_generated} synthetic, {total_samples_generated - synthetic_samples_generated} research-based
+- **Current rate**: {current_synthetic_pct:.0%} synthetic (target: ~{synthetic_budget:.0%})
 
-Even if your current synthetic rate seems high, consider whether you still have room in your overall budget to generate synthetic samples, especially if research is proving challenging. Focus on the remaining budget rather than just the current rate.
+**Resource Status:**
+- **Synthetic budget**: {remaining_synthetic_budget}/{max_synthetic_samples} remaining (target: {synthetic_budget:.0%}, current: {current_synthetic_pct:.0%})
+- **Research success**: {research_success_rate} (based on recent attempts)
+- **Remaining work**: {remaining_total_work} samples needed
 
-A perfect final ratio is not required, but you should guide the process toward the mission's goal while respecting your remaining budget."""
+**Decision Framework:**
+1. **Primary consideration**: Which approach is most likely to succeed for this specific characteristic/topic?
+2. **Secondary consideration**: Balance toward the synthetic target while ensuring quality
+3. **Budget awareness**: Synthetic budget is both a target (aim for ~{synthetic_budget:.0%}) and ceiling (don't significantly exceed it)
+
+**Practical guidance**:
+- **Under synthetic target** ({current_synthetic_pct:.0%} < {synthetic_budget:.0%}): Prefer `synthetic` when research is challenging or synthetic would be high-quality
+- **Near synthetic target** ({current_synthetic_pct:.0%} ~= {synthetic_budget:.0%}): Either approach fine--choose based on success likelihood
+- **Over synthetic target** ({current_synthetic_pct:.0%} > {synthetic_budget:.0%}): Prefer `research` unless it's repeatedly failing
+- **Research struggling**: Don't let budget prevent synthetic generation if research keeps failing
+- **Mission end**: If approaching completion, balance final ratio toward target if possible"""
 
     last_action_analysis = ""
     last_message_content = (
@@ -437,13 +859,15 @@ A perfect final ratio is not required, but you should guide the process toward t
     if last_action_status == "failure":
         failure_agent = last_action_agent if last_action_agent else "unknown"
         if failure_agent == "research":
-            last_action_analysis = """
+            last_action_analysis = f"""
 **3. Last Action Analysis:** FAILURE
    - **Agent:** research
    - **Reason:** The agent failed to produce a valid Data Prospecting Report.
-   - **Guidance:** The current research approach is not working. You have two options:
-     1. Delegate to `research` again, but you should suggest a significantly different search strategy.
-     2. If this has failed and seems likely to continue to fail (see Decision History), consider escalating to `synthetic`. """
+   - **Context**: {research_attempts} research attempts, {consecutive_failures} consecutive failures
+   - **Guidance:** Research is struggling for this characteristic/topic. Consider:
+     1. Try `research` again with a different approach (if this seems like a temporary issue)
+     2. Switch to `synthetic` (especially if research has failed {research_attempts}+ times or this characteristic/topic is inherently difficult to research)
+     3. The decision should prioritize success over synthetic budget--better to generate a useful synthetic sample than fail repeatedly"""
         elif failure_agent == "archive":
             error_snippet = last_message_content.replace("\n", " ").strip()[:150]
             last_action_analysis = f"""
@@ -471,10 +895,10 @@ A perfect final ratio is not required, but you should guide the process toward t
 **1. Current Task:**
 {current_task_str}
 
-**2. Mission History & Status:**
+**2. Mission Status:**
+   - **Progress**: {mission_status}
    - **Decision History (Last 5):** {decision_history[-5:]}
-   - **Consecutive Failures:** {consecutive_failures}
-   - **Synthetic Sample Status:** {synthetic_status}
+   - **Recent Failures:** {consecutive_failures} consecutive
 
 {last_action_analysis}
 
@@ -553,7 +977,7 @@ Your response MUST be a JSON object matching the required schema, with a single 
 def research_node(state: "DataScoutState") -> Dict:
     """
     Verifiable Research Workflow:
-    - Dynamically scoped ReAct loop (discover → extract → synthesize)
+    - Dynamically scoped ReAct loop (discover -> extract -> synthesize)
     - Cache ALL successful tool outputs as evidence in research_session_cache
     - Return a single 'Data Prospecting Report' as the final submission
     - Do NOT mutate research_findings here (Supervisor handles parsing)
@@ -615,8 +1039,116 @@ def research_node(state: "DataScoutState") -> Dict:
         )
         strategy_block = get_claimify_strategy_block(characteristic)
 
+    # --- CACHED-ONLY MODE CHECK ---
+    cached_only = state.get("cached_only_mode") or state.get("no_search_tools")
+    allowed_urls = list(
+        set(state.get("allowed_url_whitelist", []))
+        - set(state.get("excluded_urls", []))
+    )
+
+    if cached_only:
+        print(
+            f"   🔁 Research: Operating in cached-only mode with {len(allowed_urls)} allowed URLs"
+        )
+
+        # If no allowed URLs remain, emit sentinel
+        if not allowed_urls:
+            print(
+                "   📭 Research: No allowed URLs remaining. Emitting 'No More Cached Data' sentinel."
+            )
+            sentinel_msg = AIMessage(content="# No More Cached Data")
+            return {
+                "messages": [sentinel_msg],
+                "research_session_cache": session_cache,
+            }
+
+        # Build condensed cache index for allowed URLs only
+        cache_index = index_research_cache(session_cache)
+        allowed_cache_entries = [
+            entry
+            for entry in cache_index
+            if entry["url"] in {normalize_url(url) for url in allowed_urls}
+        ]
+
+        print(
+            f"   🗂️  Research: Found {len(allowed_cache_entries)} cached entries for allowed URLs"
+        )
+
+        # Build cached entries description for LLM
+        cache_descriptions = []
+        for i, entry in enumerate(allowed_cache_entries, 1):
+            desc = f"{i}. **{entry['url']}** ({entry['source_type']})\n   Content: {entry['content_excerpt'][:200]}..."
+            cache_descriptions.append(desc)
+
+        cache_context = (
+            "\n\n".join(cache_descriptions)
+            if cache_descriptions
+            else "No cached entries available."
+        )
+
     # --- System prompt (mission-specific) ---
-    system_prompt = f"""You are a Data Prospector, a specialist in identifying high-quality raw text for data extraction pipelines. You operate using a ReAct (Reasoning and Acting) methodology.
+    if cached_only:
+        # Cached-only mode prompt
+        system_prompt = f"""You are a Data Prospector operating in CACHED-ONLY MODE. You have already gathered cached data and must now select from pre-retrieved sources.
+
+Your Mission: Select and process one source from the previously cached data for the characteristic **"{characteristic}"** in the topic **"{topic}"**.
+
+---
+{strategy_block}
+---
+
+### CACHED-ONLY CONSTRAINTS
+
+**CRITICAL RESTRICTIONS:**
+- You may NOT use search tools (`web_search`, `arxiv_search`, `wikipedia_search`)
+- You may ONLY select from the allowed URLs listed below
+- You may reference cached data using `[CACHE_REFERENCE: call_id]` tokens
+- You may use `url_to_markdown` tool ONLY for URLs in the allowed list
+
+### ALLOWED URLs:
+{chr(10).join(f"- {url}" for url in allowed_urls)}
+
+### CACHED DATA AVAILABLE:
+{cache_context}
+
+### REQUIRED OUTPUT:
+
+You must produce either:
+
+1. **A complete Data Prospecting Report** (if you find a suitable cached source):
+
+# Data Prospecting Report
+
+**Target Characteristic**: `{characteristic}`
+**Search Domain**: `{topic}`
+
+**Source URL**: `[Must be one of the allowed URLs above]`
+**Source Title**: `"[Title from cached data or URL]"`
+
+---
+
+## Justification for Selection
+
+* **Alignment with `{characteristic}`**: [Explain why this cached source aligns with the characteristic]
+* **Potential for High Yield**: [Explain why this will yield good training examples]
+
+---
+
+## Retrieved Content (Markdown)
+
+`[Use [CACHE_REFERENCE: call_id] or paste curated content from allowed URL]`
+
+2. **OR, if no cached sources are suitable:**
+
+# No More Cached Data
+
+If none of the cached sources are appropriate for this characteristic/topic combination.
+
+**Remember:** Only select URLs from the allowed list. Any other URL will be rejected.
+"""
+    else:
+        # Normal mode prompt
+        system_prompt = f"""You are a Data Prospector, a specialist in identifying high-quality raw text for data extraction pipelines. You operate using a ReAct (Reasoning and Acting) methodology.
 
 Your Mission: Your goal is to find and retrieve a source document from the **{topic}** domain whose writing style and structure make it an exceptionally good source for extracting factual claims that exemplify the principle of **"{characteristic}"**.
 
@@ -647,7 +1179,7 @@ Your goal is to maximize the signal-to-noise ratio for the next agent.
 
 This tells the supervisor to fetch the full content from the cache, saving context space.
 
-When you have successfully found and extracted a suitable source, you MUST output a single, structured 'Data Prospecting Report' exactly in the format below—no extra commentary. Your response must start with `# Data Prospecting Report`.
+When you have successfully found and extracted a suitable source, you MUST output a single, structured 'Data Prospecting Report' exactly in the format below--no extra commentary. Your response must start with `# Data Prospecting Report`.
 
 # Data Prospecting Report
 
@@ -697,52 +1229,68 @@ When you have successfully found and extracted a suitable source, you MUST outpu
         iteration += 1
         print(f"   ▶ Iteration {iteration}/{max_iterations}")
 
-        # <<< NEW DEBUGGING >>>
+        # Context tracking for research progress
         history_char_count = sum(len(str(m.content)) for m in react_messages)
         print(
-            f"      📊 CONTEXT: {len(react_messages)} messages, ~{history_char_count} chars"
+            f"   📊 CONTEXT: {len(react_messages)} messages, ~{history_char_count} chars"
         )
-        # <<< END NEW DEBUGGING >>>
 
         # Dynamic scoping + warnings
         warning_message = ""
         current_tools = all_research_tools
 
-        if iteration == max_iterations - 2:
-            warning_message = (
-                "\n\n**SYSTEM WARNING:** You have 3 iterations remaining."
-                "Begin concluding discovery and prepare to select a final document for extraction. This is the last turn that you may use the search tools (`web_search`, `arxiv_search`, `wikipedia_search`)."
-            )
-        elif iteration == max_iterations - 1:
-            # Disable discovery; force extraction
+        # In cached-only mode, filter out search tools from the start
+        if cached_only:
             current_tools = [
                 t
                 for t in all_research_tools
                 if t.name not in ["web_search", "arxiv_search", "wikipedia_search"]
             ]
-            warning_message = (
-                "\n\n**SYSTEM WARNING:** You have 2 iterations remaining. "
-                "The search tools (`web_search`, `arxiv_search`, `wikipedia_search`) have been disabled. Analyze current leads and extract a full document. This is the last turn that you may use the tools you are being provided."
-            )
-        elif iteration == max_iterations:
-            # Disable all tools; force synthesis
-            current_tools = []
-            warning_message = (
-                "\n\n**SYSTEM WARNING:** FINAL iteration. All tools disabled. "
-                "Write the final 'Data Prospecting Report' now."
-            )
+            if iteration == 1:
+                warning_message = (
+                    "\n\n**CACHED-ONLY MODE:** Search tools are disabled. You must work with cached data only. "
+                    "Select from allowed URLs or emit 'No More Cached Data' if none are suitable."
+                )
+            elif iteration == max_iterations:
+                current_tools = []
+                warning_message = (
+                    "\n\n**FINAL ITERATION (CACHED MODE):** All tools disabled. "
+                    "Produce either a 'Data Prospecting Report' or 'No More Cached Data' now."
+                )
+        else:
+            # Normal mode dynamic scoping
+            if iteration == max_iterations - 2:
+                warning_message = (
+                    "\n\n**SYSTEM WARNING:** You have 3 iterations remaining."
+                    "Begin concluding discovery and prepare to select a final document for extraction. This is the last turn that you may use the search tools (`web_search`, `arxiv_search`, `wikipedia_search`)."
+                )
+            elif iteration == max_iterations - 1:
+                # Disable discovery; force extraction
+                current_tools = [
+                    t
+                    for t in all_research_tools
+                    if t.name not in ["web_search", "arxiv_search", "wikipedia_search"]
+                ]
+                warning_message = (
+                    "\n\n**SYSTEM WARNING:** You have 2 iterations remaining. "
+                    "The search tools (`web_search`, `arxiv_search`, `wikipedia_search`) have been disabled. Analyze current leads and extract a full document. This is the last turn that you may use the tools you are being provided."
+                )
+            elif iteration == max_iterations:
+                # Disable all tools; force synthesis
+                current_tools = []
+                warning_message = (
+                    "\n\n**SYSTEM WARNING:** FINAL iteration. All tools disabled. "
+                    "Write the final 'Data Prospecting Report' now."
+                )
 
         system_prompt_for_iteration = system_prompt + warning_message
 
-        # <<< NEW DEBUGGING (for final iteration only) >>>
-        if iteration == max_iterations:
-            print(
-                "      ❗ FINAL PROMPT: The following system prompt is being sent to the LLM for its last chance."
-            )
-            print("      " + "-" * 20)
-            print(f"      {system_prompt_for_iteration[-500:]}")  # Print last 500 chars
-            print("      " + "-" * 20)
-        # <<< END NEW DEBUGGING >>>
+        # Debug final iteration (uncomment for detailed debugging)
+        # if iteration == max_iterations:
+        #     print("      ❗ FINAL PROMPT: The following system prompt is being sent to the LLM for its last chance.")
+        #     print("      " + "-" * 20)
+        #     print(f"      {system_prompt_for_iteration[-500:]}")  # Print last 500 chars
+        #     print("      " + "-" * 20)
 
         # Bind tools as scoped this iteration
         llm_with_tools = llm.bind_tools(current_tools) if current_tools else llm
@@ -761,14 +1309,13 @@ When you have successfully found and extracted a suitable source, you MUST outpu
         try:
             result = react_agent.invoke({"messages": react_messages})
 
-            # <<< NEW DEBUGGING >>>
-            raw_content = getattr(result, "content", "[NO CONTENT]")
-            print("      📝 --- START RAW LLM RESPONSE ---")
-            print(f"{raw_content.strip()}")
-            print("      📝 ---  END RAW LLM RESPONSE  ---")
-            # <<< END NEW DEBUGGING >>>
+            # Debug LLM responses (uncomment for detailed debugging)
+            # print("      📝 --- START RAW LLM RESPONSE ---")
+            # print(f"{getattr(result, 'content', '[NO CONTENT]').strip()}")
+            # print("      📝 ---  END RAW LLM RESPONSE  ---")
 
             # RECOVERY: Handle empty responses on final iteration with sleep-and-retry
+            raw_content = getattr(result, "content", "")
             if iteration == max_iterations and (
                 not raw_content or not raw_content.strip()
             ):
@@ -946,16 +1493,15 @@ When you have successfully found and extracted a suitable source, you MUST outpu
     if not final_report_msg:
         # [EXISTING CODE] print("   ⚠️ No final report produced; generating a minimal report to satisfy contract.")
 
-        # <<< NEW DEBUGGING >>>
+        # Research failure analysis - useful for diagnosing issues
         print(
-            "      ☠️ FAILURE ANALYSIS: The agent completed all iterations without producing a final report."
+            "   ⚠️ Research failed to produce final report after all iterations"
         )
-        print("      Last 3 messages in history:")
+        print("   Last 3 messages:")
         for msg in react_messages[-3:]:
             print(
-                f"         - [{getattr(msg, 'type', 'UNKNOWN').upper()}]: {str(getattr(msg, 'content', ''))[:150]}..."
+                f"      - [{getattr(msg, 'type', 'UNKNOWN').upper()}]: {str(getattr(msg, 'content', ''))[:100]}..."
             )
-        # <<< END NEW DEBUGGING >>>
 
         # Produce an honest, minimal report so Supervisor can proceed
         fallback_report = f"""# Data Prospecting Report
@@ -1007,6 +1553,7 @@ def archive_node(state: "DataScoutState") -> Dict:
 
     # --- FIX: Get content from research_findings, not messages ---
     provenance = state.get("current_sample_provenance", "synthetic")
+    print(f"   🏷️  Archive: Received provenance '{provenance}' from state")
     messages = state.get("messages", [])
     research_findings = state.get("research_findings", [])
 
@@ -1046,14 +1593,14 @@ def archive_node(state: "DataScoutState") -> Dict:
 Your task is to generate a concise pedigree catalog entry in Markdown format based on the provided document.
 
 The entry MUST include:
-- The sample’s provenance: **'{provenance}'**
+- The sample's provenance: **'{provenance}'**
 - The source URL from the document.
 - The target characteristic from the document.
 
 Respond ONLY with the Markdown content for the pedigree entry. Do NOT include any other text, greetings, or JSON formatting.
 
 **Example Response:**
-### YYYY-MM-DD — Sample Archived
+### YYYY-MM-DD -- Sample Archived
 - **Source Type:** {provenance}
 - **Source URL:** [source url]
 - **Target Characteristic:** {characteristic}
@@ -1140,6 +1687,7 @@ def fitness_node(state: "DataScoutState") -> Dict:
     config = load_claimify_config()
     llm = create_llm(config, "fitness")
 
+
     # --- START: PROVENANCE-AWARE LOGIC (Part 3) ---
     # 1. Retrieve the provenance flag from the state
     provenance = state.get("current_sample_provenance", "unknown")
@@ -1210,7 +1758,7 @@ The Research Agent has returned the following document(s):
 
 Evaluate the retrieved content against the mission. Is this document a goldmine for the Copy Editor, or a waste of time?
 
-**CRITICAL: Your response must be ONLY a valid JSON object with no additional text, explanations, or formatting. Do not include any text before or after the JSON. Start your response directly with the opening brace {{{{ and end with the closing brace }}}}.**
+**CRITICAL: Your response must be ONLY a valid JSON object with no additional text, explanations, or formatting. Do not include any text before or after the JSON. Start your response directly with the opening brace {{{{ and end with the closing brace }}}}.
 
 **JSON Schema to follow:**
 ```json
@@ -1249,9 +1797,14 @@ Evaluate the retrieved content against the mission. Is this document a goldmine 
         f"**Inspection Report**\n- **Status:** {status}\n- **Reason:** {report.reason}"
     )
 
+
     return {
         "messages": [AIMessage(content=log_message_content)],
         "fitness_report": report,
+        "current_sample_provenance": provenance,  # Pass through provenance from state
+        "research_findings": state.get(
+            "research_findings", []
+        ),  # Pass through content for archive
     }
 
 
@@ -1331,7 +1884,7 @@ Focus on creating a book that will be a goldmine for the Copy Editor to extract 
     # This creates a message that the TUI can parse and extract sample content from
     display_message = AIMessage(
         content=(
-            "      📝 --- START LLM RESPONSE ---\n"
+            "      📝 --- START LLM RESPONSE ---"
             f"🎨 SYNTHETIC GENERATION: Created synthetic content for {characteristic} - {topic}\n\n"
             f"## Generated Content (Synthetic)\n\n{report_content}\n\n"
             "      📝 ---  END LLM RESPONSE  ---"
@@ -1354,3 +1907,262 @@ def get_node_config(node_name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]
     if config.scout_agent and config.scout_agent.mission_plan:
         return config.scout_agent.mission_plan.get_node_config(node_name)
     return None
+
+
+# === Supervisor Helper Functions for Cached Reuse ===
+
+
+def needs_more_for_current_pair(
+    progress: Dict, current_task: Optional[Dict], pending_increment: int = 0
+) -> bool:
+    """Compute if we need more samples for the current characteristic/topic pair."""
+    if not progress or not current_task:
+        return False
+
+    mission_name = list(progress.keys())[0] if progress else None
+    if not mission_name:
+        return False
+
+    characteristic = current_task.get("characteristic")
+    topic = current_task.get("topic")
+
+    if not characteristic or not topic:
+        return False
+
+    char_data = progress.get(mission_name, {}).get(characteristic, {})
+    topic_data = char_data.get("topics", {}).get(topic, {})
+
+    collected = topic_data.get("collected", 0) + pending_increment
+    target = topic_data.get("target", 0)
+
+    return collected < target
+
+
+def extract_used_urls_from_findings(research_findings: List) -> List[str]:
+    """Parse Source URLs from Data Prospecting Reports in research findings."""
+    urls = []
+
+    if not research_findings:
+        return urls
+
+    for finding in research_findings:
+        finding_str = str(finding)
+        lines = finding_str.split("\n")
+
+        for line in lines:
+            if "**Source URL**:" in line:
+                try:
+                    # Extract URL from markdown format: **Source URL**: `url`
+                    parts = line.split("`")
+                    if len(parts) > 1:
+                        url = parts[1].strip()
+                        if url and url not in urls:
+                            urls.append(url)
+                except Exception:
+                    continue
+
+    return urls
+
+
+def normalize_url(url: str) -> str:
+    """Simple URL normalization to avoid variants."""
+    try:
+        # Convert to lowercase and strip trailing slash
+        normalized = url.lower().rstrip("/")
+        # Basic protocol normalization
+        if normalized.startswith("http://"):
+            normalized = normalized.replace("http://", "https://", 1)
+        return normalized
+    except Exception:
+        return url
+
+
+def index_research_cache(cache: List[Dict]) -> List[Dict]:
+    """Index research cache entries by URL with metadata."""
+    indexed = []
+    seen_urls = set()
+
+    for entry in cache or []:
+        if not isinstance(entry, dict):
+            continue
+
+        args = entry.get("args", {})
+        if not isinstance(args, dict):
+            continue
+
+        # Extract URL from args
+        url = args.get("url") or args.get("base_url") or args.get("start_url")
+        if not url:
+            continue
+
+        # Normalize URL
+        normalized_url = normalize_url(url)
+        if normalized_url in seen_urls:
+            continue  # Skip duplicates, prefer first occurrence
+        seen_urls.add(normalized_url)
+
+        # Determine status
+        output = entry.get("output")
+        ok_status = False
+        content_excerpt = ""
+        content_length = 0
+
+        if isinstance(output, dict):
+            ok_status = output.get("status") == "ok"
+            if ok_status and "content" in output:
+                content = str(output["content"])
+                content_length = len(content)
+                content_excerpt = content[:800] + ("..." if len(content) > 800 else "")
+        elif output:
+            ok_status = True
+            content = str(output)
+            content_length = len(content)
+            content_excerpt = content[:800] + ("..." if len(content) > 800 else "")
+
+        # Extract source type from tool name
+        tool_name = entry.get("tool", "unknown")
+        source_type = {
+            "web_search": "web",
+            "arxiv_search": "arxiv",
+            "wikipedia_search": "wikipedia",
+            "url_to_markdown": "web",
+            "documentation_crawler": "web",
+        }.get(tool_name, "unknown")
+
+        indexed.append(
+            {
+                "call_id": entry.get("call_id"),
+                "url": normalized_url,
+                "source_type": source_type,
+                "ok_status": ok_status,
+                "content_excerpt": content_excerpt,
+                "content_length": content_length,
+            }
+        )
+
+    return indexed
+
+
+def llm_select_cached_sources(
+    llm: ChatLiteLLM,
+    characteristic: str,
+    topic: str,
+    strategy_block: str,
+    excluded_urls: List[str],
+    cache_index: List[Dict],
+    max_candidates: int = 15,
+    synthetic_samples_generated: int = 0,
+    total_samples_generated: int = 0,
+    synthetic_budget: float = 0.2,
+    total_samples_target: int = 0,
+) -> tuple[str, List[str], str]:
+    """Have LLM select cached sources for reuse.
+
+    Returns:
+        (decision, selected_urls, rationale)
+    """
+    # Filter cache to remove excluded URLs and limit candidates
+    excluded_set = {normalize_url(url) for url in excluded_urls}
+    available_candidates = [
+        entry
+        for entry in cache_index
+        if entry["url"] not in excluded_set and entry["ok_status"]
+    ][:max_candidates]
+
+    if not available_candidates:
+        return "stop", [], "No unused cached sources available."
+
+    # Prepare candidate descriptions for LLM
+    candidates_desc = []
+    for i, entry in enumerate(available_candidates, 1):
+        desc = f"{i}. URL: {entry['url']}\n   Source: {entry['source_type']}\n   Content: {entry['content_excerpt'][:200]}..."
+        candidates_desc.append(desc)
+
+    candidates_text = "\n\n".join(candidates_desc)
+
+    # Calculate synthetic budget metrics
+    max_synthetic_samples = (
+        int(total_samples_target * synthetic_budget) if total_samples_target > 0 else 0
+    )
+    current_synthetic_pct = (
+        (synthetic_samples_generated / total_samples_generated)
+        if total_samples_generated > 0
+        else 0.0
+    )
+    remaining_synthetic_budget = max_synthetic_samples - synthetic_samples_generated
+    remaining_total_needed = total_samples_target - total_samples_generated
+
+    system_prompt = f"""You are the supervisor selecting whether any unused cached sources can produce another high-quality sample for characteristic '{characteristic}' in topic '{topic}'.
+
+Your task: Evaluate the available cached sources and decide if any could yield additional samples.
+
+---
+{strategy_block}
+---
+
+**Mission Context & Synthetic Budget:**
+- **Current Status**: Generated {total_samples_generated} samples so far (Research: {total_samples_generated - synthetic_samples_generated}, Synthetic: {synthetic_samples_generated})
+- **Mission Target**: {total_samples_target} total samples
+- **Synthetic Budget**: {synthetic_budget:.0%} ({max_synthetic_samples} samples max)
+- **Current Synthetic Rate**: {current_synthetic_pct:.1%}
+- **Remaining Synthetic Budget**: {remaining_synthetic_budget} synthetic samples available
+- **Remaining Work**: {remaining_total_needed} more samples needed to complete mission
+
+**Available Cached Sources:**
+{candidates_text}
+
+**Decision Guidance:**
+Consider both cached source quality AND synthetic budget balance (target: {synthetic_budget:.0%}, current: {current_synthetic_pct:.1%}):
+- **Under target** ({current_synthetic_pct:.1%} < {synthetic_budget:.0%}): Prefer "stop" (synthetic) unless cached sources are excellent
+- **Near target** ({current_synthetic_pct:.1%} ~= {synthetic_budget:.0%}): Choose based on cached source quality
+- **Over target** ({current_synthetic_pct:.1%} > {synthetic_budget:.0%}): Prefer "reuse_cached" unless cached sources are very poor
+- **Quality priority**: Don't sacrifice quality for budget--a good sample is better than hitting exact ratios
+
+**Constraints:**
+- Only select from the sources listed above
+- Do NOT select any URL that was already used: {excluded_urls}
+- Consider synthetic budget in your decision rationale
+
+**Response Format (JSON only):**
+{{
+    "decision": "reuse_cached" or "stop",
+    "selected_urls": ["list", "of", "selected", "urls"],
+    "rationale": "Brief explanation considering both source quality and synthetic budget"
+}}
+
+Respond ONLY with the JSON object, no other text."""
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+        ]
+    )
+
+    agent = prompt | llm
+
+    try:
+        result = agent.invoke({})
+        dethought = strip_reasoning_block(result.content)
+        repaired_data = json_repair.loads(dethought)
+
+        decision = repaired_data.get("decision", "stop")
+        selected_urls = repaired_data.get("selected_urls", [])
+        rationale = repaired_data.get("rationale", "LLM selection completed")
+
+        # Validate decision
+        if decision not in ["reuse_cached", "stop"]:
+            decision = "stop"
+
+        # Filter out any excluded URLs that might have slipped through
+        if isinstance(selected_urls, list):
+            selected_urls = [
+                url for url in selected_urls if normalize_url(url) not in excluded_set
+            ]
+        else:
+            selected_urls = []
+
+        return decision, selected_urls, rationale
+
+    except Exception as e:
+        print(f"⚠️ llm_select_cached_sources: Parsing failed: {e}")
+        return "stop", [], "LLM selection failed"
