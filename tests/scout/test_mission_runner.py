@@ -21,7 +21,7 @@ class TestMissionRunner(unittest.TestCase):
 
         # 3. Instantiate the MissionRunner
         mission_runner = MissionRunner(
-            checkpointer=mock_checkpointer, app=mock_app, mission_plan_path="settings/scout_mission.yaml"
+            checkpointer=mock_checkpointer, app=mock_app, mission_plan_path="settings/mission_config.yaml"
         )
 
         # 4. Call the method to be tested

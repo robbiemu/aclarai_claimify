@@ -133,7 +133,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
     characteristic = next_task.get("characteristic", "Verifiability")
     topic = next_task.get("topic", "general domain")
     try:
-        with open("settings/scout_mission.yaml", "r") as f:
+        with open("settings/mission_config.yaml", "r") as f:
             content = f.read()
             if content.startswith("#"):
                 first_newline = content.find("\n")
@@ -506,7 +506,7 @@ Your response MUST be a JSON object matching the required schema, with a single 
             # Recalculate strategy block for the new task
             characteristic = next_task.get("characteristic", "Verifiability")
             try:
-                with open("settings/scout_mission.yaml", "r") as f:
+                with open("settings/mission_config.yaml", "r") as f:
                     content = f.read()
                     if content.startswith("#"):
                         first_newline = content.find("\n")

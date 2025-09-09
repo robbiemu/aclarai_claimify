@@ -28,7 +28,7 @@ uv sync --extra scout
 
 The entire behavior of the Data Scout Agent is controlled by a single YAML configuration file: the **Mission Plan**. Think of this file as the "brain" of the agent. You don't write code to change the agent's goals; you simply describe your desired outcome in the mission plan, and the agent adapts its strategy to achieve it.
 
-The default mission plan is located at `settings/scout_mission.yaml`.
+The default mission plan is located at `settings/mission_config.yaml`.
 
 ## 4. Quick Start: A Simple Example
 
@@ -86,7 +86,7 @@ Once the agent completes its mission, you will find the following new files and 
 *   **`examples/data/datasets/tier2/`**: Contains the final, curated corpus files, created by sampling from the Tier 1 data. This is the data you will use in the next steps of the pipeline.
 *   **`examples/PEDIGREE.md`**: The audit trail. This file contains a detailed log of where each piece of data came from, when it was sourced, and for what purpose.
 
-## 5. Deep Dive: The `scout_mission.yaml` File
+## 5. Deep Dive: The `mission_config.yaml` File
 
 The mission plan is highly configurable. Here is a breakdown of the key parameters you can use to control the agent's behavior.
 
@@ -139,10 +139,10 @@ Run the agent with your configured mission plan to produce the Tier 2 raw text c
 
 ```bash
 # Option A: Interactive TUI (recommended for monitoring progress)
-python3 datascout_tui.py settings/scout_mission.yaml
+python3 datascout_tui.py settings/mission_config.yaml
 
 # Option B: Command-line batch mode
-aclarai-claimify-scout --mission settings/scout_mission.yaml
+aclarai-claimify-scout --mission settings/mission_config.yaml
 ```
 
 **Step 2: Generate the "Gold Standard" Dataset**

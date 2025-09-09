@@ -486,11 +486,11 @@ def generate(
         False, "--debug", help="Enable debug logging to /tmp/tui_debug.log"
     ),
     config: Optional[str] = typer.Option(
-        None, "--config", "-c", help="Path to mission configuration file (defaults to mission_config.yaml)"
+        None, "--config", "-c", help="Path to scout configuration file (defaults to scout_config.yaml)"
     ),
 ):
     """Start the Data Scout Agent TUI for sample generation."""
-    mission_plan_path = mission or "settings/scout_mission.yaml"
+    mission_plan_path = mission or "settings/mission_config.yaml"
     if not os.path.exists(mission_plan_path):
         typer.echo(f"❌ Mission file not found: {mission_plan_path}", err=True)
         raise typer.Exit(1)

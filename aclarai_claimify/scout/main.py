@@ -41,7 +41,7 @@ def get_mission_names(mission_plan_path: str) -> list[str]:
 
 
 def load_mission_plan(
-    mission_plan_path: str = "settings/scout_mission.yaml",
+    mission_plan_path: str = "settings/mission_config.yaml",
     mission_name: Optional[str] = None,
 ) -> dict:
     """
@@ -120,7 +120,7 @@ def run_agent_process(
     with SqliteSaver.from_conn_string(
         "checkpoints/mission_checkpoints.db"
     ) as checkpointer:
-        mission_plan_path = "settings/scout_mission.yaml"
+        mission_plan_path = "settings/mission_config.yaml"
 
         if resume_from:
             # If resuming, mission_name is not required from the command line
@@ -215,7 +215,7 @@ def run(
         None, "--resume-from", help="The mission ID to resume from."
     ),
     config: Optional[str] = typer.Option(
-        None, "--config", "-c", help="Path to mission configuration file (defaults to mission_config.yaml)."
+        None, "--config", "-c", help="Path to scout configuration file (defaults to scout_config.yaml)."
     ),
 ):
     # Load mission-specific configuration instead of main claimify config

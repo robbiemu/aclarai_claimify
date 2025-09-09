@@ -293,11 +293,11 @@ def get_mission_details_from_file(
     mission_plan_path: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    Lightweight parser for scout_mission.yaml to get mission names and target sizes
+    Lightweight parser for mission_config.yaml to get mission names and target sizes
     without instantiating a MissionRunner.
 
     Args:
-        mission_plan_path: Path to the scout_mission.yaml file.
+        mission_plan_path: Path to the mission_config.yaml file.
 
     Returns:
         A dictionary containing mission names and their calculated total samples,

@@ -6,7 +6,7 @@
 set -e  # Exit on any error
 
 echo "=== Generating 1200 Samples with Data Scout Agent ==="
-echo "Using mission plan: settings/scout_mission.yaml"
+echo "Using mission plan: settings/mission_config.yaml"
 echo "Model: ollama/gpt-oss:20b"
 echo ""
 

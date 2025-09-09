@@ -12,7 +12,7 @@ The Data Scout Agent configuration has been separated from the main `aclarai_cla
 
 ### 1. New Mission Configuration File
 
-Created `mission_config.yaml` in the project root containing all mission parameters and scout settings:
+Created `scout_config.yaml` in the project root containing all mission parameters and scout settings:
 
 ```yaml
 # Mission Configuration for Data Scout Agent
@@ -45,7 +45,7 @@ checkpointer_path: ".checkpointer.sqlite"
 ### 2. New Configuration Loader
 
 Created `aclarai_claimify/scout/config.py` with a simple `load_scout_config()` function that:
-- Defaults to `mission_config.yaml` in the current directory
+- Defaults to `scout_config.yaml` in the current directory
 - Accepts custom config file paths
 - Returns sensible defaults if the config file is missing
 
@@ -55,13 +55,13 @@ All scout commands now support `--config` (`-c`) flag:
 
 ```bash
 # CLI usage
-aclarai-claimify-scout --mission research_dataset --config my_mission_config.yaml
+aclarai-claimify-scout --mission research_dataset --config my_scout_config.yaml
 
 # TUI usage  
-aclarai-claimify-datascout-tui --config my_mission_config.yaml
+aclarai-claimify-datascout-tui --config my_scout_config.yaml
 
 # Step 1 script usage
-./scripts/run_scout_step1.sh --mission research_dataset --config my_mission_config.yaml
+./scripts/run_scout_step1.sh --mission research_dataset --config my_scout_config.yaml
 ```
 
 ### 4. Fixed Path Discrepancy
@@ -74,7 +74,7 @@ aclarai-claimify-datascout-tui --config my_mission_config.yaml
 
 ### Basic Usage (Default Config)
 ```bash
-# Uses mission_config.yaml in current directory
+# Uses scout_config.yaml in current directory
 aclarai-claimify-scout --mission research_dataset
 ```
 

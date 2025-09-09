@@ -33,7 +33,7 @@ echo ""
 
 # Run the Data Scout Agent with the mission plan
 echo "Starting Data Scout Agent..."
-echo "Mission plan: settings/scout_mission.yaml"
+echo "Mission plan: settings/mission_config.yaml"
 echo ""
 echo "NOTE: This process will generate 1200 samples and may take several hours to complete."
 echo "The agent will automatically save results to:"
