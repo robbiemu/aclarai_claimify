@@ -110,6 +110,16 @@ def supervisor_node(state: DataScoutState) -> Dict:
     """The supervisor node, now driven by a progress tracker."""
     config = load_claimify_config()
     llm = create_llm(config, "supervisor")
+    
+    # Track recursion step
+    step_count = state.get("step_count", 0)
+    max_recursion_steps = state.get("max_recursion_steps", 30)  # Default value
+    
+    # Output recursion step information
+    print(f"🔄 Supervisor: Recursion step {step_count}/{max_recursion_steps}")
+    
+    # Update step count for next iteration (to be included in return statements)
+    next_step_count = step_count + 1
 
     # --- CACHED-ONLY MODE CHECK ---
     # If we're in cached-only mode, deterministically route to research without LLM consultation
@@ -148,6 +158,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 ),
                 "synthetic_budget": state.get("synthetic_budget", 0.2),
                 "fitness_report": None,
+                "step_count": next_step_count,  # Increment step count for next iteration
             }
 
         # Check if we have any allowed URLs left
@@ -180,6 +191,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 ),
                 "synthetic_budget": state.get("synthetic_budget", 0.2),
                 "fitness_report": None,
+                "step_count": next_step_count,  # Increment step count for next iteration
             }
 
         # Deterministically route to research for cached-only processing
@@ -208,6 +220,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
             "allowed_url_whitelist": list(allowed),
             "cached_exhausted": False,
             "next_cycle_cached_reuse": state.get("next_cycle_cached_reuse"),
+            "step_count": next_step_count,  # Increment step count for next iteration
         }
 
     # --- 1. Load State ---
@@ -226,7 +239,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
     if not next_task:
         # All tasks are complete.
         print("🎉 Supervisor: All tasks in the mission are complete!")
-        return {"next_agent": "end", "progress": progress, "strategy_block": ""}
+        return {"next_agent": "end", "progress": progress, "strategy_block": "", "step_count": next_step_count}
 
     # We have a task. Now, we determine the strategy block for it.
     characteristic = next_task.get("characteristic", "Verifiability")
@@ -309,6 +322,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 ),
                 "synthetic_budget": state.get("synthetic_budget", 0.2),
                 "fitness_report": None,
+                "step_count": next_step_count,  # Increment step count for next iteration
             }
 
         # Check if we need more samples for this characteristic/topic pair
@@ -339,6 +353,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 ),
                 "synthetic_budget": state.get("synthetic_budget", 0.2),
                 "fitness_report": None,
+                "step_count": next_step_count,  # Increment step count for next iteration
             }
 
         # 3) Build candidate cache index
@@ -376,6 +391,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 ),
                 "synthetic_budget": state.get("synthetic_budget", 0.2),
                 "fitness_report": None,
+                "step_count": next_step_count,  # Increment step count for next iteration
             }
 
         # 4) Let LLM select cached sources
@@ -458,6 +474,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                     ),
                     "synthetic_budget": state.get("synthetic_budget", 0.2),
                     "fitness_report": None,
+                    "step_count": next_step_count,  # Increment step count for next iteration
                 }
 
         # Default: no cached reuse
@@ -479,6 +496,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
             "research_samples_generated": state.get("research_samples_generated", 0),
             "synthetic_budget": state.get("synthetic_budget", 0.2),
             "fitness_report": None,
+            "step_count": next_step_count,  # Increment step count for next iteration
         }
 
     synthetic_samples_generated = state.get("synthetic_samples_generated", 0)
@@ -529,6 +547,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 "current_sample_provenance": state.get(
                     "current_sample_provenance", "unknown"
                 ),  # Pass through provenance
+                "step_count": next_step_count,  # Increment step count for next iteration
             }
         else:
             print(
@@ -616,6 +635,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
             "research_samples_generated": research_samples_generated,
             "synthetic_budget": synthetic_budget,
             "fitness_report": None,
+            "step_count": next_step_count,  # Increment step count for next iteration
         }
 
     # Check for Data Prospecting Report and enforce whitelist in cached-only mode
@@ -673,6 +693,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                         "research_samples_generated": research_samples_generated,
                         "synthetic_budget": synthetic_budget,
                         "fitness_report": None,
+                        "step_count": next_step_count,  # Increment step count for next iteration
                     }
                 else:
                     print(
@@ -780,6 +801,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
             "research_findings": research_findings,
             # Clear any old fitness report when routing to fitness for a new report
             "fitness_report": None,
+            "step_count": next_step_count,  # Increment step count for next iteration
         }
 
     base_prompt = """You are the supervisor of a team of Data Prospecting agents. Your role is to analyze the current mission status and decide which agent should act next.
@@ -971,6 +993,7 @@ Your response MUST be a JSON object matching the required schema, with a single 
         "synthetic_budget": synthetic_budget,
         # Clear any fitness report when falling through to standard logic
         "fitness_report": None,
+        "step_count": next_step_count,  # Increment step count for next iteration
     }
 
 

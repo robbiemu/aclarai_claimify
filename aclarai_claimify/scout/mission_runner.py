@@ -98,10 +98,11 @@ class MissionRunner:
         target_size = self.mission_config.get("target_size", 0)
         goals = self.mission_config.get("goals", [])
         
-        # Load scout config for writer paths
+        # Load scout config for writer paths and recursion limit
         scout_config = load_scout_config()
         writer_config = scout_config.get("writer", {})
         pedigree_path = writer_config.get("audit_trail_path", "examples/PEDIGREE.md")
+        max_recursion_steps = scout_config.get("recursion_per_sample", 30)
 
         progress = {
             mission_name: {
@@ -126,6 +127,7 @@ class MissionRunner:
             "last_thread_id": None,
             "excluded_urls": [],
             "next_cycle_cached_reuse": {"active": False},
+            "max_recursion_steps": max_recursion_steps,
         }
 
     def run_mission(
@@ -217,6 +219,9 @@ class MissionRunner:
             # Carry over sample counters
             "synthetic_samples_generated": mission_state.get("synthetic_samples_generated", 0),
             "research_samples_generated": mission_state.get("research_samples_generated", 0),
+            # Add recursion tracking
+            "step_count": 0,
+            "max_recursion_steps": mission_state.get("max_recursion_steps", 30),
         }
         
         if is_cached_reuse:

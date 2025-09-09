@@ -2,7 +2,7 @@
 # This file contains the mission parameters and configuration for the Data Scout Agent, separated from the main claimify config.
 
 search_provider: "brave/search"
-recursion_per_sample: 30
+recursion_per_sample: 14 # 14 allows for 2 retries at research
 initial_prompt: |
   Begin the data prospecting mission based on your configured mission plan.
 

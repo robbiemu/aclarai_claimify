@@ -50,6 +50,13 @@ def build_graph(checkpointer: SqliteSaver):
     # The supervisor decides which agent to run next.
     def supervisor_router(state):
         """Route based on supervisor decision with debugging."""
+        # Track recursion step
+        step_count = state.get("step_count", 0)
+        max_recursion_steps = state.get("max_recursion_steps", 30)  # Default value
+        
+        # Output recursion step information
+        print(f"🔄 Supervisor: Recursion step {step_count}/{max_recursion_steps}")
+        
         next_agent = state.get("next_agent")
         decision_history = state.get("decision_history", [])
         print(

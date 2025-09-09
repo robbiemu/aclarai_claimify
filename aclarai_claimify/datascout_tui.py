@@ -12,6 +12,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
 from textual.widgets import Header, Footer
+from textual.screen import ModalScreen
+from textual.widgets import Button, RichLog
 import typer
 
 from .scout.tui.components.stats_header import StatsHeader, GenerationStats
@@ -25,7 +27,10 @@ from .scout.tui.agent_output_parser import (
     ProgressUpdate,
     NewMessage,
     ErrorMessage,
+    SyntheticSampleUpdate,
+    RecursionStepUpdate,
 )
+from .scout.tui.components.error_modal import ErrorModal
 from .scout.config import load_scout_config
 from .scout.scout_utils import get_mission_details_from_file
 
@@ -43,6 +48,7 @@ class DataScoutTUI(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("e", "show_error_modal", "Errors"),
     ]
 
     def __init__(
@@ -72,6 +78,32 @@ class DataScoutTUI(App):
                     f.write(f"{message}\n")
             except Exception:
                 pass  # Ignore debug logging errors
+    
+    def _load_mission_config(self, mission_name: str) -> dict:
+        """Load mission-specific configuration from the mission config file."""
+        try:
+            import yaml
+            with open(self.mission_plan_path, "r") as f:
+                content = f.read()
+                # Remove comment header if it exists
+                if content.startswith("#"):
+                    first_newline = content.find("\n")
+                    if first_newline != -1:
+                        content = content[first_newline + 1:]
+                
+                mission_plan = yaml.safe_load(content)
+                if not mission_plan or "missions" not in mission_plan:
+                    return {}
+                
+                # Find the specific mission
+                for mission in mission_plan.get("missions", []):
+                    if mission.get("name") == mission_name:
+                        return mission
+                
+                return {}
+        except Exception as e:
+            self.debug_log(f"Failed to load mission config for {mission_name}: {e}")
+            return {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -114,6 +146,17 @@ class DataScoutTUI(App):
 
         scout_config = load_scout_config(self.scout_config_path)
         recursion_limit = scout_config.get("recursion_per_sample", 27)
+        
+        # Get synthetic budget and target size from mission config (not scout config)
+        mission_config = self._load_mission_config(mission_name)
+        synthetic_budget = mission_config.get("synthetic_budget", 1.0)
+        target_size = mission_config.get("target_size", 1)
+        
+        # Debug log the mission config values
+        self.debug_log(f"Mission config loaded for '{mission_name}':")
+        self.debug_log(f"  synthetic_budget: {synthetic_budget}")
+        self.debug_log(f"  target_size: {target_size}")
+        self.debug_log(f"  total_samples_target: {total_samples_target}")
 
         self.agent_process_manager = AgentProcessManager(
             mission_name=mission_name,
@@ -121,6 +164,11 @@ class DataScoutTUI(App):
         )
 
         self.stats_header = StatsHeader()
+        # Initialize stats with synthetic budget and target size
+        self.stats.synthetic_budget = synthetic_budget
+        self.stats.target_size = target_size
+        self.stats.total_recursion_steps = recursion_limit
+        
         self.progress_panel = ProgressPanel()
         self.mission_panel = MissionPanel(
             self.mission_plan_path,
@@ -212,6 +260,17 @@ class DataScoutTUI(App):
                 )
 
             self.debug_log(f"PROGRESS UPDATE: {event.completed}/{event.target}")
+        elif isinstance(event, SyntheticSampleUpdate):
+            # Update synthetic sample count
+            self.stats.synthetic_completed = event.count
+            self.stats_header.update_stats(self.stats)
+            self.debug_log(f"SYNTHETIC SAMPLE UPDATE: {event.count}")
+        elif isinstance(event, RecursionStepUpdate):
+            # Update recursion step information
+            self.stats.current_recursion_step = event.current_step
+            self.stats.total_recursion_steps = event.total_steps
+            self.stats_header.update_stats(self.stats)
+            self.debug_log(f"RECURSION STEP UPDATE: {event.current_step}/{event.total_steps}")
         elif isinstance(event, NewMessage):
             self.debug_log(
                 f"NEW MESSAGE EVENT: {event.role} -> {event.content[:100]}..."
@@ -258,6 +317,15 @@ class DataScoutTUI(App):
                 or "📊 CONTEXT:" in event.content
             ) and self.mission_panel.current_status == "Initializing...":
                 self.mission_panel.update_status("Working...")
+                # Extract current recursion step if available
+                import re
+                iteration_match = re.search(r"▶ Iteration (\d+)/(\d+)", event.content)
+                if iteration_match:
+                    current_step = int(iteration_match.group(1))
+                    total_steps = int(iteration_match.group(2))
+                    self.stats.current_recursion_step = current_step
+                    self.stats.total_recursion_steps = total_steps
+                    self.stats_header.update_stats(self.stats)
 
             # Check for routing to END (fallback pattern)
             elif (
@@ -278,13 +346,17 @@ class DataScoutTUI(App):
                     pct_match = re.search(r"\((\d+\.?\d*)% complete\)", event.content)
                     completion_pct = pct_match.group(1) if pct_match else "?"
 
+                    # Extract source type (provenance) if available
+                    source_match = re.search(r"Source: (\w+)", event.content)
+                    source_type = source_match.group(1) if source_match else "unknown"
+
                     # Try to extract sample excerpt from the most recent content
                     sample_excerpt = self._extract_recent_sample_excerpt()
 
                     if sample_excerpt:
-                        description = f"{sample_excerpt} ({completion_pct}%)"
+                        description = f"{sample_excerpt} ({completion_pct}% complete) - Source: {source_type}"
                     else:
-                        description = f"Archived ({completion_pct}% complete)"
+                        description = f"Archived ({completion_pct}% complete) - Source: {source_type}"
 
                     self.progress_panel.add_sample(sample_num, description)
         elif isinstance(event, ErrorMessage):
@@ -309,6 +381,19 @@ class DataScoutTUI(App):
                 pass  # Ignore errors during cleanup
 
         self.exit()
+
+    def action_show_error_modal(self) -> None:
+        """Show the error display modal."""
+        from .scout.tui.components.error_modal import ErrorModal
+
+        error_messages = [
+            msg["content"]
+            for msg in self.conversation.messages
+            if msg["role"] == "error"
+        ]
+        if not error_messages:
+            error_messages = ["No errors recorded yet."]
+        self.push_screen(ErrorModal(error_messages=error_messages))
 
     def _auto_close_after_completion(self):
         """Auto-close the TUI after agent process completion with a countdown."""

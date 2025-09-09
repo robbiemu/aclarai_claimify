@@ -1,6 +1,6 @@
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import ProgressBar, Static
+from textual.widgets import Static
 
 from .stats_header import GenerationStats
 
@@ -10,25 +10,29 @@ class ProgressPanel(Static):
 
     def __init__(self):
         super().__init__(id="progress-panel")
-        self.progress_bar = None
+        self.progress_display = None
         self.recent_samples_widget = None
         self.recent_samples = []
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static("📈 Generation Progress", classes="panel-title")
-            self.progress_bar = ProgressBar(
-                total=100, show_percentage=True, id="main-progress"
+            self.progress_display = Static("0%", id="main-progress")
+            yield self.progress_display
+            self.recent_samples_widget = Static(
+                "Recent samples will appear here...", id="recent-samples"
             )
-            yield self.progress_bar
-            self.recent_samples_widget = Static("Recent samples will appear here...", id="recent-samples")
             yield self.recent_samples_widget
 
     def update_progress(self, stats: GenerationStats):
-        if self.progress_bar:
+        if self.progress_display:
             progress_pct = int(100 * stats.completed / max(1, stats.target))
-            self.progress_bar.update(progress=progress_pct)
-    
+            # Create a simple progress bar using characters
+            bar_width = 40
+            filled_width = int(bar_width * progress_pct / 100)
+            bar = "█" * filled_width + "░" * (bar_width - filled_width)
+            self.progress_display.update(f"{progress_pct}% [{bar}]")
+
     def add_sample(self, sample_number: int, description: str):
         """Add a recent sample to the display."""
         # Format the sample entry with proper wrapping for long descriptions
@@ -38,16 +42,18 @@ class ProgressPanel(Static):
         else:
             # For short descriptions, keep on one line
             sample_entry = f"#{sample_number}: {description}"
-        
-        # Keep only the 3 most recent samples
+
+        # Keep more recent samples (increased from 3 to 10)
         self.recent_samples.append(sample_entry)
-        if len(self.recent_samples) > 3:
-            self.recent_samples = self.recent_samples[-3:]
-        
+        if len(self.recent_samples) > 10:
+            self.recent_samples = self.recent_samples[-10:]
+
         # Update the widget
         if self.recent_samples_widget:
             if self.recent_samples:
-                content = "\n\n".join(self.recent_samples)  # Extra spacing for readability
+                content = "\n\n".join(
+                    self.recent_samples
+                )  # Extra spacing for readability
             else:
                 content = "Recent samples will appear here..."
             self.recent_samples_widget.update(content)

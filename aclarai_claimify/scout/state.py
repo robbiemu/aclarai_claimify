@@ -43,6 +43,8 @@ class DataScoutState(TypedDict):
         allowed_url_whitelist: List of URLs that are allowed to be used in cached-only mode.
         cached_exhausted: Flag indicating if all cached data has been exhausted.
         next_cycle_cached_reuse: Plan for next cycle's cached reuse behavior.
+        step_count: Counter for tracking recursion steps in the agent graph.
+        max_recursion_steps: Maximum allowed recursion steps for the agent graph.
     """
     messages: Annotated[list, add_messages]
     run_id: str
@@ -73,3 +75,5 @@ class DataScoutState(TypedDict):
     allowed_url_whitelist: List[str]
     cached_exhausted: bool
     next_cycle_cached_reuse: Optional[Dict[str, Any]]
+    step_count: int
+    max_recursion_steps: int
