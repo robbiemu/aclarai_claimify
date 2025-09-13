@@ -4,8 +4,7 @@ CLI entry point for the Data Scout Agent.
 
 import os
 import sys
-from typing import Optional
-import litellm
+from typing import Optional, Dict, Any
 import typer
 import yaml
 
@@ -98,15 +97,54 @@ def load_mission_plan(
         }
 
 
-def setup_observability():
-    """Initializes LangSmith tracing for all litellm calls if configured."""
-    if os.getenv("LANGCHAIN_API_KEY"):
-        print("LangSmith API Key found. Setting up litellm callback...")
-        litellm.success_callback = ["langsmith"]
-        litellm.failure_callback = ["langsmith"]
-        print("Observability configured.")
+def setup_observability(scout_config: Dict[str, Any]):
+    """Configure LangSmith tracing via LangChain/LangGraph environment variables.
+
+    Avoids LiteLLM's custom logger (which requires a running event loop in-thread)
+    and instead relies on LANGCHAIN_TRACING_V2 for observability.
+    """
+    # Read env vars (support both LANGCHAIN_* and LANGSMITH_* forms)
+    env_api_key = os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY")
+    env_tracing = os.getenv("LANGCHAIN_TRACING_V2") or os.getenv("LANGSMITH_TRACING")
+    env_endpoint = os.getenv("LANGCHAIN_ENDPOINT") or os.getenv("LANGSMITH_ENDPOINT")
+    env_project = os.getenv("LANGCHAIN_PROJECT") or os.getenv("LANGSMITH_PROJECT")
+
+    # Read config overrides
+    observability_config = scout_config.get("observability", {})
+    cfg_api_key = observability_config.get("api_key")
+    cfg_tracing = observability_config.get("tracing")
+    cfg_endpoint = observability_config.get("endpoint")
+    cfg_project = observability_config.get("project")
+
+    # Resolve effective settings (env takes precedence)
+    api_key = env_api_key or cfg_api_key
+    tracing = env_tracing if env_tracing is not None else cfg_tracing
+    endpoint = env_endpoint or cfg_endpoint
+    project = env_project or cfg_project
+
+    # Respect explicit disable
+    if tracing and str(tracing).lower() in {"false", "0", "no", "off"}:
+        print("LangSmith tracing explicitly disabled.")
+        return
+
+    if api_key:
+        # Normalize both namespaces for compatibility
+        os.environ.setdefault("LANGCHAIN_API_KEY", api_key)
+        os.environ.setdefault("LANGSMITH_API_KEY", api_key)
+        if endpoint:
+            os.environ.setdefault("LANGCHAIN_ENDPOINT", endpoint)
+            os.environ.setdefault("LANGSMITH_ENDPOINT", endpoint)
+        if project:
+            os.environ.setdefault("LANGCHAIN_PROJECT", project)
+            os.environ.setdefault("LANGSMITH_PROJECT", project)
+        # Enable tracing with LangChain v2
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        print("Observability configured (LangChain/LangGraph tracing enabled).")
     else:
-        print("Warning: LANGCHAIN_API_KEY not set. Skipping LangSmith integration.")
+        if tracing and str(tracing).lower() in {"true", "1", "yes", "on"}:
+            print("Warning: Tracing requested but no API key provided (LANGCHAIN_API_KEY/LANGSMITH_API_KEY).")
+        else:
+            print("Note: No LangSmith configuration found. Skipping observability setup.")
 
 
 def run_agent_process(
@@ -155,7 +193,11 @@ def run_agent_process(
                 )
                 return
 
-        setup_observability()
+        # Load mission-specific configuration
+        scout_config = load_scout_config(scout_config_path)
+        
+        # Set up observability with the scout configuration
+        setup_observability(scout_config)
         sys.stdout.flush()
 
         if not _HAVE_LIBCRAWLER:
@@ -220,6 +262,9 @@ def run(
 ):
     # Load mission-specific configuration instead of main claimify config
     scout_config = load_scout_config(config)
+    
+    # Set up observability with the scout configuration
+    setup_observability(scout_config)
     
     run_agent_process(
         mission_name=mission_name,

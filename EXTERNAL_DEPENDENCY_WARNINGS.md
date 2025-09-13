@@ -37,7 +37,16 @@ DeprecationWarning: There is no current event loop
 2. The warning comes from LiteLLM's internal implementation
 3. As users of the LiteLLM package, we cannot modify its internal event loop handling
 
-**Impact:** This warning is purely informational and does not affect the functionality of our code. The LiteLLM library works correctly despite this warning.
+**Impact:** This warning is purely informational and does not affect the functionality of our code. The LiteLLM library works correctly despite this warning. LangSmith tracing will function properly even when this warning appears.
+
+## LiteLLM Custom Logger Initialization Warning (Resolved)
+
+Previously observed when enabling LiteLLM's LangSmith custom logger:
+```
+LiteLLM:ERROR: litellm_logging.py:3555 - [Non-Blocking Error] Error initializing custom logger: no running event loop
+```
+
+We have removed reliance on LiteLLM's custom logger for observability and now use LangChain/LangGraph native tracing via environment variables (LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, etc.). As a result, this error should no longer appear during scout runs.
 
 ## Resolution Strategy
 

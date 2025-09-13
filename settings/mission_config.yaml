@@ -1,7 +1,7 @@
 missions:
   # Mission 1: Generate the small, high-quality corpus for production artifacts.
   - name: "production_corpus"
-    target_size: 1 #110  # Samples per goal
+    target_size: 70 #110  # Samples per goal
     synthetic_budget: 1.0 # Allow 100% synthetic data to create perfect edge cases
     tools:
       web_search:
@@ -35,7 +35,7 @@ missions:
 
   # Mission 2: Generate the large-scale research dataset.
   - name: "research_dataset"
-    target_size: 2 #290 # Samples per component
+    target_size: 216 #290 # Samples per component
     synthetic_budget: 0.2 # Allow up to 20% synthetic data
     tools:
       web_search:

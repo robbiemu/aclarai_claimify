@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import load_claimify_config, load_optimization_config
+from .scout.config import load_scout_config
 
 try:
     from .optimization.compile import (
@@ -84,6 +85,13 @@ Examples:
   # Show schema help
   aclarai-claimify schema --component selection
         """,
+    )
+
+    # Global flags
+    parser.add_argument(
+        "--no-robots",
+        action="store_true",
+        help="Ignore robots.txt rules when fetching URLs",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -351,6 +359,16 @@ def validate_generate_args(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def handle_robots_flag(args: argparse.Namespace) -> None:
+    """Handle the --no-robots flag.
+
+    Args:
+        args: Parsed command line arguments
+    """
+    if args.no_robots:
+        load_scout_config(use_robots=False)
+
+
 def handle_init_command(args: argparse.Namespace) -> None:
     """Handle the init subcommand.
 
@@ -599,6 +617,9 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
+    
+    # Handle global flags
+    handle_robots_flag(args)
 
     # Route to appropriate handler
     if args.command == "init":

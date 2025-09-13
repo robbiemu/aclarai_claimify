@@ -11,13 +11,16 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
-def load_scout_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+def load_scout_config(
+    config_path: Optional[str] = None, use_robots: bool = True
+) -> Dict[str, Any]:
     """
     Load mission configuration for the scout agent from a separate config file.
 
     Args:
         config_path: Optional path to the scout config file.
                     If None, defaults to 'scout_config.yaml' in current directory.
+        use_robots: Whether to respect robots.txt rules.
 
     Returns:
         Dictionary containing the mission configuration for the scout agent.
@@ -41,11 +44,15 @@ def load_scout_config(config_path: Optional[str] = None) -> Dict[str, Any]:
             },
             "checkpointer_path": ".checkpointer.sqlite",
             "nodes": {"research": {"max_iterations": 7}},
+            "use_robots": use_robots,
         }
 
     try:
         with open(config_file, "r") as f:
             config_data = yaml.safe_load(f) or {}
+
+        # Add use_robots to the config
+        config_data["use_robots"] = use_robots
 
         logger.info(f"Loaded scout configuration from {config_path}")
         return config_data
@@ -62,4 +69,5 @@ def load_scout_config(config_path: Optional[str] = None) -> Dict[str, Any]:
                 "audit_trail_path": "examples/PEDIGREE.md",
             },
             "checkpointer_path": ".checkpointer.sqlite",
+            "use_robots": use_robots,
         }

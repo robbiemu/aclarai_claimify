@@ -20,11 +20,16 @@ class AgentProcessManager:
             "--recursion-limit",
             str(self.recursion_limit),
         ]
+        
+        # Use the current environment without forcing any variables
+        env = os.environ.copy()
+        
         self.process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=os.getcwd(),
+            env=env,
         )
         return self.process
 

@@ -61,12 +61,14 @@ class DataScoutTUI(App):
         log_file: Optional[str] = None,
         debug: bool = False,
         scout_config_path: Optional[str] = None,
+        use_robots: bool = True,
     ):
         super().__init__()
         self.mission_plan_path = mission_plan_path
         self.log_file = log_file
         self.debug_enabled = debug
         self.scout_config_path = scout_config_path
+        self.use_robots = use_robots
         if debug:
             print("Writing debug log to /tmp/tui_debug.log")
         self.stats = GenerationStats()
@@ -593,7 +595,9 @@ class DataScoutTUI(App):
         )
         self.stats.target = total_samples_target
 
-        scout_config = load_scout_config(self.scout_config_path)
+        scout_config = load_scout_config(
+            self.scout_config_path, use_robots=self.use_robots
+        )
         recursion_limit = scout_config.get("recursion_per_sample", 27)
 
         # Get synthetic budget and target size from mission config (not scout config)
@@ -1134,6 +1138,9 @@ def generate(
         "-c",
         help="Path to scout configuration file (defaults to scout_config.yaml)",
     ),
+    no_robots: bool = typer.Option(
+        False, "--no-robots", help="Ignore robots.txt rules"
+    ),
 ):
     """Start the Data Scout Agent TUI for sample generation."""
     mission_plan_path = mission or "settings/mission_config.yaml"
@@ -1141,11 +1148,15 @@ def generate(
         typer.echo(f"❌ Mission file not found: {mission_plan_path}", err=True)
         raise typer.Exit(1)
 
+    # Handle --no-robots flag
+    use_robots = not no_robots
+
     app = DataScoutTUI(
         mission_plan_path=mission_plan_path,
         log_file=log,
         debug=debug,
         scout_config_path=config,
+        use_robots=use_robots,
     )
     app.run()
 

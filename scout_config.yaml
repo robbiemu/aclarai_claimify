@@ -1,10 +1,28 @@
 # Mission Configuration for Data Scout Agent
 # This file contains the mission parameters and configuration for the Data Scout Agent, separated from the main claimify config.
 
-search_provider: "brave/search"
-recursion_per_sample: 14 # 14 allows for 2 retries at research
+search_provider: "google/search"
+recursion_per_sample: 35 # 11 allows for 2 retries at research (4n + 3)
 initial_prompt: |
   Begin the data prospecting mission based on your configured mission plan.
+
+# Observability configuration for LangSmith
+# You can also set these via environment variables:
+# - LANGCHAIN_API_KEY or LANGSMITH_API_KEY (required for tracing)
+# - LANGCHAIN_TRACING_V2 or LANGSMITH_TRACING (enable/disable tracing)
+# - LANGCHAIN_ENDPOINT or LANGSMITH_ENDPOINT (custom endpoint)
+# - LANGCHAIN_PROJECT or LANGSMITH_PROJECT (project name)
+#
+# Note: LiteLLM may show a non-blocking error about logger initialization when the scout
+# agent starts. This is expected behavior and does not affect functionality - LangSmith
+# tracing will work correctly despite this initial error message. The error occurs because 
+# LiteLLM tries to initialize its custom logger during import, but in subprocess contexts 
+# there may not be an event loop available yet. This is purely informational and can be ignored.
+observability:
+  tracing: true  # Enable/disable tracing
+  # api_key: "your-langsmith-api-key"  # Not recommended in config files, use environment variables instead
+  endpoint: "https://api.smith.langchain.com"  # Custom endpoint for self-hosted deployments
+  project: "aclarai-claimify-scout"  # Project name for organizing traces
 
 nodes:
   research:

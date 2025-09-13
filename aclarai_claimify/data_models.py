@@ -451,6 +451,11 @@ class ScoutAgentConfig(BaseModel):
         description="The initial prompt to send to the agent to start the mission. If not provided, the TUI will ask for it interactively.",
     )
 
+    # Whether to use robots.txt
+    use_robots: bool = Field(
+        default=True, description="Whether to use robots.txt rules when fetching URLs"
+    )
+
 
 class ClaimifyConfig(BaseModel):
     """Configuration for the Claimify pipeline."""

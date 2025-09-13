@@ -101,6 +101,11 @@ The scout config file supports these main sections:
 - **`search_provider`**: Search service to use (e.g., "brave/search", "duckduckgo/search")
 - **`recursion_per_sample`**: Maximum iterations per sample generation cycle
 - **`initial_prompt`**: Starting prompt for the agent
+- **`observability`**: LangSmith configuration for tracing and monitoring
+  - **`api_key`**: LangSmith API key (recommended to use environment variables instead)
+  - **`tracing`**: Enable/disable tracing (boolean)
+  - **`endpoint`**: Custom LangSmith endpoint for self-hosted deployments
+  - **`project`**: Project name for organizing traces
 - **`nodes.research.max_iterations`**: ReAct loop iterations for research
 - **`mission_plan`**: LLM model configurations for each agent node
 - **`writer`**: Output path configurations
@@ -139,7 +144,55 @@ writer:
 4. **Better Defaults**: Sensible fallbacks if config file is missing
 5. **CLI Integration**: All tools support the --config flag consistently
 
+## LangSmith Observability Configuration
+
+The scout agent supports LangSmith tracing for monitoring and debugging your missions. You can configure LangSmith in two ways:
+
+### Environment Variables (Recommended)
+
+Set these environment variables for LangSmith configuration:
+
+```bash
+# Authentication (required for tracing)
+export LANGCHAIN_API_KEY="your-langsmith-api-key"
+# or
+export LANGSMITH_API_KEY="your-langsmith-api-key"
+
+# Enable tracing (optional, enabled by default when API key is present)
+export LANGCHAIN_TRACING_V2="true"
+# or
+export LANGSMITH_TRACING="true"
+
+# Custom endpoint for self-hosted deployments (optional)
+export LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+# or
+export LANGSMITH_ENDPOINT="https://api.smith.langchain.com"
+
+# Project name for organizing traces (optional)
+export LANGCHAIN_PROJECT="aclarai-claimify-scout"
+# or
+export LANGSMITH_PROJECT="aclarai-claimify-scout"
+```
+
+### Configuration File
+
+Alternatively, you can configure LangSmith in your `scout_config.yaml`:
+
+```yaml
+observability:
+  # api_key: "your-langsmith-api-key"  # Not recommended in config files
+  tracing: true
+  endpoint: "https://api.smith.langchain.com"
+  project: "aclarai-claimify-scout"
+```
+
+Note: It's recommended to use environment variables for sensitive information like API keys rather than including them in configuration files.
+
+When LangSmith is properly configured, you'll see tracing information in your LangSmith dashboard, which can help you monitor and debug your scout missions.
+
 ## Testing the Changes
+
+To verify everything works:
 
 To verify everything works:
 

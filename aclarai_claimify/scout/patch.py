@@ -4,7 +4,11 @@ Applies a more aggressive runtime patch to the litellm library.
 
 This patch directly targets the function in the module where it is defined,
 ensuring that our patched version is used.
+
+Note: We rely on LangChain/LangGraph's native LangSmith tracing via environment
+variables and do not use LiteLLM's custom logger, to avoid event-loop issues.
 """
+ 
 
 # Import the modules we need to patch
 import json
@@ -625,3 +629,10 @@ except Exception as e:
     import traceback
 
     _patch_log(f"Traceback: {traceback.format_exc()}")
+
+except Exception as e:
+    _patch_log(f"⚠️  Could not apply LiteLLM completion patch: {e}")
+    import traceback
+
+    _patch_log(f"Traceback: {traceback.format_exc()}")
+ 

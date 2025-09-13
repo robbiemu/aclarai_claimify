@@ -13,6 +13,7 @@ import asyncio
 import shutil
 from typing import Optional, List, Dict, Any, Callable
 from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import httpx
 import pydantic
@@ -20,7 +21,7 @@ from bs4 import BeautifulSoup
 from langchain_core.tools import tool
 
 from .litesearch import AsyncRateLimitManager, SearchProviderProxy
-from ..config import load_claimify_config
+from .config import load_scout_config
 
 
 # Optional import for deep crawling
@@ -36,9 +37,12 @@ except ImportError:
 # Globals for tool clients
 # -------------------------
 
-# Use a single rate manager and http client for all tools
+# Use a single async rate manager and http client for async search providers
 RATE_MANAGER = AsyncRateLimitManager()
 HTTP_CLIENT = httpx.AsyncClient()
+
+# Dedicated synchronous client for page fetches (markdown, pre-scan, etc.)
+SYNC_HTTP_CLIENT = httpx.Client(follow_redirects=True)
 
 
 def _ensure_event_loop():
@@ -98,10 +102,8 @@ def create_web_search_tool():
     Factory function that creates a web_search tool with the configured provider hard-coded.
     This ensures that the search provider is determined by the configuration, not by the agent.
     """
-    config = load_claimify_config()
-    search_provider = "duckduckgo/search"
-    if config.scout_agent and config.scout_agent.search_provider:
-        search_provider = config.scout_agent.search_provider
+    config = load_scout_config()
+    search_provider = config.get("search_provider", "duckduckgo/search")
 
     @tool("web_search", args_schema=WebSearchInput)
     def web_search(query: str) -> Dict[str, Any]:
@@ -120,6 +122,37 @@ def create_web_search_tool():
         try:
             # Run the async operation safely with improved event loop management
             results = _run_async_safely(proxy.run(query))
+
+            # Post-processing: check robots.txt if enabled
+            if config.get("use_robots", True) and results:
+                filtered_results = []
+                for result in results:
+                    url = result.get("url")
+                    if not url:
+                        continue
+
+                    try:
+                        parsed_url = urlparse(url)
+                        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                        robots_url = urljoin(base_url, "/robots.txt")
+
+                        rp = RobotFileParser()
+                        rp.set_url(robots_url)
+                        rp.read()
+
+                        if rp.can_fetch("DataScout/1.0", url):
+                            filtered_results.append(result)
+                        else:
+                            print(
+                                f"      ⚠️ Filtering out {url} due to robots.txt"
+                            )
+                    except Exception as e:
+                        # If we can't check robots.txt, assume it's okay to proceed
+                        print(
+                            f"      ⚠️ Could not check robots.txt for {url}: {e}, keeping result"
+                        )
+                        filtered_results.append(result)
+                results = filtered_results
 
             return {
                 "query": query,
@@ -182,7 +215,9 @@ def arxiv_search(query: str) -> Dict[str, Any]:
 class ArxivGetContentInput(pydantic.BaseModel):
     """Input schema for the arxiv_get_content tool."""
 
-    query: str = pydantic.Field(description="The search query to get content for from Arxiv.")
+    query: str = pydantic.Field(
+        description="The search query to get content for from Arxiv."
+    )
 
 
 @tool("arxiv_get_content", args_schema=ArxivGetContentInput)
@@ -197,29 +232,31 @@ def arxiv_get_content(query: str) -> Dict[str, Any]:
     try:
         # Using LangChain's ArxivAPIWrapper for detailed content retrieval
         from langchain_community.utilities import ArxivAPIWrapper
-        
+
         arxiv_wrapper = ArxivAPIWrapper(
             top_k_results=5,
             ARXIV_MAX_QUERY_LENGTH=300,
             load_max_docs=5,
             load_all_available_meta=False,
-            doc_content_chars_max=8000
+            doc_content_chars_max=8000,
         )
-        
+
         # Get detailed documents
         docs = arxiv_wrapper.load(query)
-        
+
         # Format the results for consistency
         formatted_results = []
         for doc in docs:
-            formatted_results.append({
-                "title": doc.metadata.get("Title", "N/A"),
-                "authors": doc.metadata.get("Authors", "N/A"),
-                "published": doc.metadata.get("Published", "N/A"),
-                "summary": doc.metadata.get("Summary", "N/A"),
-                "content": doc.page_content[:8000] if doc.page_content else "N/A"
-            })
-        
+            formatted_results.append(
+                {
+                    "title": doc.metadata.get("Title", "N/A"),
+                    "authors": doc.metadata.get("Authors", "N/A"),
+                    "published": doc.metadata.get("Published", "N/A"),
+                    "summary": doc.metadata.get("Summary", "N/A"),
+                    "content": doc.page_content[:8000] if doc.page_content else "N/A",
+                }
+            )
+
         return {
             "query": query,
             "results": formatted_results,
@@ -279,7 +316,9 @@ def wikipedia_search(query: str) -> Dict[str, Any]:
 class WikipediaGetContentInput(pydantic.BaseModel):
     """Input schema for the wikipedia_get_content tool."""
 
-    query: str = pydantic.Field(description="The search query to get content for from Wikipedia.")
+    query: str = pydantic.Field(
+        description="The search query to get content for from Wikipedia."
+    )
 
 
 @tool("wikipedia_get_content", args_schema=WikipediaGetContentInput)
@@ -294,26 +333,28 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
     try:
         # Using LangChain's WikipediaAPIWrapper for detailed content retrieval
         from langchain_community.utilities import WikipediaAPIWrapper
-        
+
         wikipedia_wrapper = WikipediaAPIWrapper(
             top_k_results=3,
             lang="en",
             load_all_available_meta=False,
-            doc_content_chars_max=8000
+            doc_content_chars_max=8000,
         )
-        
+
         # Get detailed documents
         docs = wikipedia_wrapper.load(query)
-        
+
         # Format the results for consistency
         formatted_results = []
         for doc in docs:
-            formatted_results.append({
-                "title": doc.metadata.get("title", "N/A"),
-                "summary": doc.metadata.get("summary", "N/A"),
-                "content": doc.page_content[:8000] if doc.page_content else "N/A"
-            })
-        
+            formatted_results.append(
+                {
+                    "title": doc.metadata.get("title", "N/A"),
+                    "summary": doc.metadata.get("summary", "N/A"),
+                    "content": doc.page_content[:8000] if doc.page_content else "N/A",
+                }
+            )
+
         return {
             "query": query,
             "results": formatted_results,
@@ -334,91 +375,72 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
 # Utility helpers
 # -------------------------
 
+
 def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str, Any]:
     """
     Truncate tool responses based on the max_tokens setting for the given role.
-    
+
     Args:
         response: The tool response to potentially truncate
         role: The role of the agent calling the tool
-        
+
     Returns:
         The response, possibly with truncated results
     """
     # Load the configuration to get max_tokens for the role
-    config = load_claimify_config()
-    
+    config = load_scout_config()
+
     # Get max_tokens for the role
     max_tokens = None
-    if config.scout_agent and config.scout_agent.mission_plan:
-        node_config = config.scout_agent.mission_plan.get_node_config(role)
-        if node_config:
-            max_tokens = node_config.max_tokens
-        else:
-            # Fallback to default max_tokens from config
-            max_tokens = config.max_tokens
-    
+    if config.get("nodes") and config.get("nodes").get(role):
+        max_tokens = config.get("nodes").get(role).get("max_tokens")
+
     # If we couldn't determine max_tokens, use a reasonable default
     if max_tokens is None:
         max_tokens = 1000
-    
+
     # Fields that might contain large text content
     text_fields = ["results", "markdown", "content", "text", "output"]
-    
+
     # Check each text field and truncate if necessary
     for field in text_fields:
         if field in response and isinstance(response[field], str):
             # Rough approximation: assume 1 token ≈ 4 characters
             max_chars = max_tokens * 4
-            
+
             # If the field content is longer than our limit, truncate it
             if len(response[field]) > max_chars:
                 truncated = response[field][:max_chars]
                 # Add a note that the response was truncated
-                response[field] = truncated + f"\n\n[Response truncated to {max_chars} characters due to token limits for role '{role}']"
-    
+                response[field] = (
+                    truncated
+                    + f"\n\n[Response truncated to {max_chars} characters due to token limits for role '{role}']"
+                )
+
     return response
 
 
 def _safe_request_get(
     url: str, timeout_s: int = 15, max_retries: int = 2, backoff: float = 1.0
 ) -> httpx.Response:
-    """Retry wrapper around httpx.get with exponential backoff and proper rate limit handling."""
+    """Synchronous httpx.get with retries/backoff.
 
-    import urllib.parse
+    Avoids mixing async clients/locks across event loops, which caused
+    'cannot reuse already awaited coroutine' during retries.
+    """
     from httpx import HTTPStatusError
-
-    # Extract domain for rate limiting
-    domain = urllib.parse.urlparse(url).netloc
 
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
-            # Apply basic rate limiting: wait for domain-specific requests
-            # Use the global rate manager to respect per-domain limits
-            async def do_rate_limited_request():
-                async with RATE_MANAGER.acquire(
-                    f"domain:{domain}", requests_per_second=2.0
-                ):
-                    return await HTTP_CLIENT.get(
-                        url, timeout=timeout_s, headers={"User-Agent": "DataScout/1.0"}
-                    )
-
-            # Run the coroutine for this specific attempt
-            resp = _run_async_safely(do_rate_limited_request())
-
-            # Update rate limit info from headers if available
-            RATE_MANAGER.update_from_headers(f"domain:{domain}", resp.headers)
-
+            resp = SYNC_HTTP_CLIENT.get(
+                url, timeout=timeout_s, headers={"User-Agent": "DataScout/1.0"}
+            )
             resp.raise_for_status()
             return resp
-
         except HTTPStatusError as e:
             last_exc = e
-
-            # Handle 429 (Too Many Requests) with special backoff
             if e.response.status_code == 429:
-                # Check for Retry-After header
                 retry_after = e.response.headers.get("retry-after")
                 if retry_after:
                     try:
@@ -426,16 +448,12 @@ def _safe_request_get(
                         print(
                             f"      ⏳ Rate limited (429) for {url}, waiting {wait_time}s as instructed"
                         )
-                        time.sleep(min(wait_time, 60))  # Cap at 60 seconds
+                        time.sleep(min(wait_time, 60))
                         continue
                     except ValueError:
-                        pass  # Fall back to exponential backoff
-
-                # No retry-after, use longer backoff for rate limits
+                        pass
                 if attempt < max_retries:
-                    rate_limit_backoff = backoff * (
-                        3**attempt
-                    )  # More aggressive for 429s
+                    rate_limit_backoff = backoff * (3**attempt)
                     print(
                         f"      ⏳ Rate limited (429) for {url}, backing off {rate_limit_backoff:.1f}s"
                     )
@@ -446,15 +464,11 @@ def _safe_request_get(
                         f"      ❌ Rate limit exceeded for {url} after {max_retries + 1} attempts"
                     )
                     raise
-
-            # Handle other 4xx errors (don't retry client errors except 429)
             elif 400 <= e.response.status_code < 500:
                 print(
                     f"      ❌ Client error {e.response.status_code} for {url}, not retrying"
                 )
                 raise
-
-            # Handle 5xx errors (server errors, worth retrying)
             elif e.response.status_code >= 500:
                 if attempt < max_retries:
                     server_error_backoff = backoff * (2**attempt)
@@ -468,23 +482,17 @@ def _safe_request_get(
                         f"      ❌ Server error persisted for {url} after {max_retries + 1} attempts"
                     )
                     raise
-
         except Exception as e:
             last_exc = e
-            # For other exceptions (timeouts, connection errors, etc.)
             if attempt < max_retries:
                 regular_backoff = backoff * (2**attempt)
-                error_type = type(e).__name__
-                error_message = str(e)
                 print(
-                    f"      ⚠️ {error_type} for {url}: {error_message}, retrying in {regular_backoff:.1f}s"
+                    f"      ⚠️ {type(e).__name__} for {url}: {str(e)}, retrying in {regular_backoff:.1f}s"
                 )
                 time.sleep(regular_backoff)
             else:
-                error_type = type(e).__name__
-                error_message = str(e)
                 print(
-                    f"      ❌ {error_type} for {url} after {max_retries + 1} attempts: {error_message}"
+                    f"      ❌ {type(e).__name__} for {url} after {max_retries + 1} attempts: {str(e)}"
                 )
                 raise
 
@@ -518,7 +526,7 @@ def _to_markdown_simple(
             "source_url": url or "",
             "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        parts.append(f"<!-- METADATA {json.dumps(fm)} -->\n")
+        parts.append(f"\n")
     if title:
         parts.append(f"# {title}\n")
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
@@ -556,6 +564,9 @@ class UrlToMarkdownInput(pydantic.BaseModel):
         default=True,
         description="If true, include minimal front-matter metadata in the returned Markdown.",
     )
+    user_agent: str = pydantic.Field(
+        default="DataScout/1.0", description="User-Agent string to use for the request."
+    )
 
 
 @tool("url_to_markdown", args_schema=UrlToMarkdownInput)
@@ -565,12 +576,43 @@ def url_to_markdown(
     timeout_s: int = 15,
     max_retries: int = 2,
     add_front_matter: bool = True,
+    user_agent: str = "DataScout/1.0",
 ) -> Dict[str, Any]:
     """
     Fetch a single web page, extract the main textual content and title, and return a Markdown string plus metadata.
+    This tool respects robots.txt by default.
     Returns a dictionary with status, URL, markdown, title, and a text snippet.
     """
+    # Load config and determine if we should check robots.txt
+    config = load_scout_config()
+    check_robots = config.get("use_robots", True)
+
     try:
+        # Respect robots.txt if enabled
+        if check_robots:
+            parsed_url = urlparse(url)
+            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            robots_url = urljoin(base_url, "/robots.txt")
+
+            rp = RobotFileParser()
+            rp.set_url(robots_url)
+            try:
+                rp.read()
+                if not rp.can_fetch(user_agent, url):
+                    return {
+                        "url": url,
+                        "markdown": "",
+                        "title": "",
+                        "text_snippet": "",
+                        "status": "error",
+                        "error": f"Request to {url} is disallowed by robots.txt.",
+                    }
+            except Exception as e:
+                # It's often fine to proceed if robots.txt is unavailable or malformed
+                print(
+                    f"      ⚠️ Could not fetch or parse robots.txt at {robots_url}: {e}"
+                )
+
         resp = _safe_request_get(url, timeout_s=timeout_s, max_retries=max_retries)
         html = resp.text
         extracted = _extract_main_text_and_title(html, css_selector=css_selector)
@@ -640,14 +682,14 @@ if _HAVE_LIBCRAWLER:
     ) -> Dict[str, Any]:
         """
         Deep-crawl a documentation site using Playwright for JS rendering and return a structured result.
-        
+
         Best practices for configuration:
         1. It's highly recommended to first download and examine the starting page using the url_to_markdown tool
            to understand the site structure before running this crawler.
         2. Use the insights from the starting page to set appropriate allowed_paths and ignore_paths.
         3. Start with a shallow max_depth (1-2) and increase gradually to avoid crawling too much content.
-        
-        The tool will attempt to infer sensible allowed/ignored paths if none are provided, but manual 
+
+        The tool will attempt to infer sensible allowed/ignored paths if none are provided, but manual
         configuration typically yields better results.
         """
         base_url_clean = base_url.rstrip("/")
@@ -655,12 +697,13 @@ if _HAVE_LIBCRAWLER:
 
         # Enhanced pre-scan with better path analysis
         try:
+            config = load_scout_config()
             resp = _safe_request_get(start_url, timeout_s=timeout_s, max_retries=1)
             soup = BeautifulSoup(resp.text, "html5lib")
             hrefs = {
                 urljoin(start_url, a["href"]) for a in soup.find_all("a", href=True)
             }
-            
+
             # Extract page title for better context
             title_tag = soup.find("title")
             page_title = title_tag.get_text(strip=True) if title_tag else "Unknown"
@@ -678,7 +721,7 @@ if _HAVE_LIBCRAWLER:
         if not inferred_allowed:
             common_prefixes = {}
             path_frequencies = {}
-            
+
             for href in hrefs:
                 if href.startswith(base_url_clean):
                     path = urlparse(href).path
@@ -687,12 +730,14 @@ if _HAVE_LIBCRAWLER:
                     if segments:
                         # Track common first segments (e.g., /docs, /api, /guides)
                         first_segment = "/" + segments[0] if segments else "/"
-                        common_prefixes[first_segment] = common_prefixes.get(first_segment, 0) + 1
-                        
+                        common_prefixes[first_segment] = (
+                            common_prefixes.get(first_segment, 0) + 1
+                        )
+
                         # Track path depth frequencies
                         depth = len(segments)
                         path_frequencies[depth] = path_frequencies.get(depth, 0) + 1
-            
+
             # Sort by frequency and take top 3 paths
             if common_prefixes:
                 inferred_allowed = [
@@ -707,9 +752,21 @@ if _HAVE_LIBCRAWLER:
         # Enhanced ignore patterns with more comprehensive defaults
         inferred_ignore = ignore_paths or []
         common_ignores = [
-            "/login", "/signup", "/search", "/admin", "/dashboard", 
-            "/account", "/profile", "/settings", "/download", "/assets",
-            "/static", "/images", "/css", "/js", "/fonts"
+            "/login",
+            "/signup",
+            "/search",
+            "/admin",
+            "/dashboard",
+            "/account",
+            "/profile",
+            "/settings",
+            "/download",
+            "/assets",
+            "/static",
+            "/images",
+            "/css",
+            "/js",
+            "/fonts",
         ]
         for ignore in common_ignores:
             if ignore not in inferred_ignore:
@@ -729,6 +786,7 @@ if _HAVE_LIBCRAWLER:
                     ignore_paths=inferred_ignore,
                     similarity_threshold=similarity_threshold,
                     max_depth=max_depth,
+                    respect_robots=config.get("use_robots", True),
                 )
             )
             if os.path.exists(output_file):
@@ -822,7 +880,15 @@ def get_available_tools() -> List[Callable]:
     """Return actual tool callables available in this environment."""
     # Create the web_search tool with the configured provider
     web_search = create_web_search_tool()
-    core_tools = [url_to_markdown, write_file, web_search, arxiv_search, arxiv_get_content, wikipedia_search, wikipedia_get_content]
+    core_tools = [
+        url_to_markdown,
+        write_file,
+        web_search,
+        arxiv_search,
+        arxiv_get_content,
+        wikipedia_search,
+        wikipedia_get_content,
+    ]
     optional = [documentation_crawler] if _HAVE_LIBCRAWLER else []
     return core_tools + optional
 
@@ -865,4 +931,8 @@ def get_tools_for_role(role: str) -> List[Callable]:
         role_mapping["research"].append("documentation_crawler")
 
     tool_names_for_role = role_mapping.get(role, [])
-    return [all_tools[tool_name] for tool_name in tool_names_for_role if tool_name in all_tools]
+    return [
+        all_tools[tool_name]
+        for tool_name in tool_names_for_role
+        if tool_name in all_tools
+    ]

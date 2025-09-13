@@ -20,6 +20,8 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+ 
+
 
 class MissionStateManager:
     """Manages the persistent state of a mission."""
@@ -247,8 +249,11 @@ class MissionRunner:
 
     def run_full_cycle(self, thread_id: str, recursion_limit: int):
         """Runs the agent for a single cycle with a given thread_id."""
+        # LangGraph expects recursion_limit at the top level of the config,
+        # while dynamic values like thread_id belong under "configurable".
         thread_config = {
-            "configurable": {"thread_id": thread_id, "recursion_limit": recursion_limit}
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": recursion_limit,
         }
         inputs = {
             "messages": [HumanMessage(content="Start the data generation cycle.")]
