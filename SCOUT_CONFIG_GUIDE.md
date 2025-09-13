@@ -91,9 +91,16 @@ Notes:
 - `requests_per_second` controls throttling for non-header-based providers (e.g., DuckDuckGo, Wikipedia wrappers). For header-based providers (e.g., Brave), rate limiting uses response headers.
 - `max_results` is the canonical field. The proxy maps it internally to provider-specific params (e.g., `num_results`, `count`, `num_web_results`). Older keys like `num_results`, `count`, and `limit` are accepted for backward compatibility but should be migrated.
 
-### Per-source Summary Limits
+### Result Size Limits (Post-Tool)
 
-You can control how much content is pulled per source document for tools like `arxiv_get_content` and `wikipedia_get_content`:
+The agent enforces result size limits after each tool call, based on tool category:
+
+- Search-like tools (`web_search`, `arxiv_search`, `wikipedia_search`, `arxiv_get_content`, `wikipedia_get_content`):
+  - Apply `summary_char_limit` per entry in `results`.
+- Fetch-like tools (`url_to_markdown`, `documentation_crawler`):
+  - Apply `result_char_limit` to the resulting markdown (`markdown` or `full_markdown`).
+
+Configure these in the research node:
 
 ```yaml
 mission_plan:
@@ -102,13 +109,16 @@ mission_plan:
       model: "openai/gpt-5-mini"
       temperature: 1
       max_tokens: 65536
-      summary_char_limit: 6000   # Optional per-source content cap (characters)
+      summary_char_limit: 6000     # Optional per-entry cap for search-like tools (chars)
+      result_char_limit: 65536     # Hard cap for fetch-like tool markdown (chars)
 ```
 
 If `summary_char_limit` is omitted, the system derives a default assuming up to ~5 sources per cycle and reserving overhead:
 
 - Default: `max(2000, int(max_tokens * 4 * 0.8 / 5))`
 - This roughly allocates 80% of the research role’s character budget across 5 sources and keeps 20% for prompts and reasoning.
+
+`result_char_limit` defaults to `65536` if not specified.
 
 ## Usage Examples
 

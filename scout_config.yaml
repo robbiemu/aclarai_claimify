@@ -1,6 +1,11 @@
 # Mission Configuration for Data Scout Agent
 # This file contains the mission parameters and configuration for the Data Scout Agent, separated from the main claimify config.
 
+model_defaults:
+  model: "openai/gpt-5-mini"
+  temperature: 1
+  max_tokens: 2000
+
 web_search:
   provider: "google/search"
   # Override global robots behavior just for web_search (optional)
@@ -47,6 +52,7 @@ mission_plan:
       model: "openai/gpt-5-mini"
       temperature: 1
       max_tokens: 65536
+      result_char_limit: 65536
       summary_char_limit: 6000
     - name: "fitness"
       model: "openai/gpt-5-mini"

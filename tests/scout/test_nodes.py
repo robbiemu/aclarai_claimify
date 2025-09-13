@@ -101,7 +101,7 @@ class TestNodes:
     def test_research_node_success(self, mock_get_tools, mock_chat_llm, mock_load_config):
         """Test research node successful operation."""
         from langchain_core.messages import HumanMessage, AIMessage
-        from aclarai_claimify.data_models import ScoutAgentConfig, ScoutAgentMissionPlanNodeConfig, ScoutAgentNodesConfig, ScoutAgentResearchNodeConfig
+        from aclarai_claimify.scout.models import ScoutAgentConfig, ScoutAgentMissionPlanNodeConfig, ScoutAgentNodesConfig, ScoutAgentResearchNodeConfig
 
         # Mock config and LLM
         mock_config = MagicMock()

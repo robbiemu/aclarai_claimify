@@ -30,14 +30,14 @@ from .utils import (
 
 from .state import DataScoutState
 from .models import FitnessReport
-from ..config import ClaimifyConfig, load_claimify_config
-from .config import load_scout_config
-from ..data_models import ScoutAgentMissionPlanNodeConfig
+from .config import get_active_scout_config
 from pydantic import BaseModel, Field
 
 
 # Define the minimum step cost for a successful research cycle
-MIN_STEPS_FOR_SUCCESSFUL_RESEARCH = 9
+MIN_STEPS_FOR_SUCCESSFUL_RESEARCH = (
+    10  # 9 allows a full completion, 10 allows a synthetic fallback for failed research
+)
 
 
 class SupervisorDecision(BaseModel):
@@ -53,30 +53,50 @@ class SupervisorDecision(BaseModel):
     )
 
 
-def create_llm(config: ClaimifyConfig, role: str) -> ChatLiteLLM:
+def create_llm(role: str) -> ChatLiteLLM:
     """Creates a configured ChatLiteLLM instance for a given agent role."""
+    # Load the scout config
+    scout_config = get_active_scout_config()
+
+    # Get model defaults from scout config
+    model_defaults = scout_config.get("model_defaults", {})
+    default_model = model_defaults.get("model", "openai/gpt-5-mini")
+    default_temperature = model_defaults.get("temperature", 0.1)
+    default_max_tokens = model_defaults.get("max_tokens", 2000)
+
+    # Try to find node-specific config in mission plan
     node_config = None
-    if config.scout_agent and config.scout_agent.mission_plan:
-        # Use the helper function for a clean, exact match
-        node_config = config.scout_agent.mission_plan.get_node_config(role)
+    mission_plan = scout_config.get("mission_plan")
+    if mission_plan and isinstance(mission_plan, dict):
+        nodes = mission_plan.get("nodes", [])
+        if isinstance(nodes, list):
+            # Find the node config that matches the role
+            for node in nodes:
+                if isinstance(node, dict) and node.get("name") == role:
+                    node_config = node
+                    break
 
     # Use node-specific config if available, otherwise fall back to defaults
     if node_config:
-        model = node_config.model
-        temperature = node_config.temperature
-        max_tokens = node_config.max_tokens
+        model = node_config.get("model", default_model)
+        temperature = node_config.get("temperature", default_temperature)
+        max_tokens = node_config.get("max_tokens", default_max_tokens)
     else:
-        # Fallback to the default model from the main config
-        model = config.default_model
-        temperature = config.temperature or 0.1
-        max_tokens = config.max_tokens or 2000
+        # Fallback to default values from scout config
+        model = default_model
+        temperature = default_temperature
+        max_tokens = default_max_tokens
 
     return ChatLiteLLM(model=model, temperature=temperature, max_tokens=max_tokens)
 
 
 def create_agent_runnable(llm: ChatLiteLLM, system_prompt: str, role: str):
     """Factory to create a new agent node's runnable."""
-    tools = get_tools_for_role(role)
+    # Load the scout config to get the use_robots setting
+    scout_config = get_active_scout_config()
+    use_robots = scout_config.get("use_robots", True)
+
+    tools = get_tools_for_role(role, use_robots=use_robots)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
@@ -112,8 +132,7 @@ def _get_next_task_from_progress(
 
 def supervisor_node(state: DataScoutState) -> Dict:
     """The supervisor node, now driven by a progress tracker."""
-    config = load_claimify_config()
-    llm = create_llm(config, "supervisor")
+    llm = create_llm("supervisor")
 
     # Track recursion step
     step_count = state.get("step_count", 0)
@@ -1084,8 +1103,7 @@ def research_node(state: "DataScoutState") -> Dict:
     - Do NOT mutate research_findings here (Supervisor handles parsing)
     """
     # --- Setup ---
-    config = load_claimify_config()
-    llm = create_llm(config, "research")
+    llm = create_llm("research")
 
     print("🔍 RESEARCH NODE (Verifiable Research Workflow)")
     print(f"   Incoming messages: {len(state.get('messages', []))}")
@@ -1131,7 +1149,11 @@ def research_node(state: "DataScoutState") -> Dict:
     print(f"   Session cache (pre-run): {len(session_cache)} items")
 
     # --- Tools & Mission Context ---
-    all_research_tools = get_tools_for_role("research")
+    # Load the scout config to get the use_robots setting
+    scout_config = get_active_scout_config()
+    use_robots = scout_config.get("use_robots", True)
+
+    all_research_tools = get_tools_for_role("research", use_robots=use_robots)
     print(f"   Tools available (global): {[t.name for t in all_research_tools]}")
 
     current_task = state.get("current_task")
@@ -1328,10 +1350,15 @@ When you have successfully found and extracted a suitable source, you MUST outpu
     if state.get("messages"):
         react_messages.extend(state["messages"])
 
-    # --- ReAct loop with dynamic tool scoping ---
-    max_iterations = int(
-        getattr(config.scout_agent.nodes.research, "max_iterations", 8)
-    )
+    scout_config = get_active_scout_config()
+
+    # Get max_iterations from scout config, with fallback to default
+    max_iterations = 8  # Default value
+    if scout_config and "nodes" in scout_config and "research" in scout_config["nodes"]:
+        max_iterations = int(
+            scout_config["nodes"]["research"].get("max_iterations", max_iterations)
+        )
+
     print(f"   🔄 ReAct loop starting (max_iterations={max_iterations})")
 
     final_report_msg = None
@@ -1515,16 +1542,41 @@ When you have successfully found and extracted a suitable source, you MUST outpu
 
                         # Debug: Print tool result details
                         if isinstance(tool_result, dict):
-                            status = tool_result.get('status')
-                            if status == 'error':
-                                error_detail = tool_result.get('error', '')
-                                print(f"         📊 Tool result status: {status} {error_detail}")
+                            status = tool_result.get("status")
+                            if status == "error":
+                                error_detail = tool_result.get("error", "")
+                                print(
+                                    f"         📊 Tool result status: {status} {error_detail}"
+                                )
                             else:
                                 print(f"         📊 Tool result status: {status}")
-                            results_data = tool_result.get("results")
-                            print(
-                                f"         📊 Tool result data: {type(results_data)} - {len(results_data) if results_data else 'None/Negative'} items"
-                            )
+
+                            if tool_name in [
+                                "url_to_markdown",
+                                "documentation_crawler",
+                            ]:
+                                content_key = (
+                                    "markdown"
+                                    if tool_name == "url_to_markdown"
+                                    else "full_markdown"
+                                )
+                                content_data = tool_result.get(content_key)
+                                data_type = type(content_data).__name__
+                                data_len = len(content_data) if content_data else 0
+                                print(
+                                    f"         📊 Tool result data: <class '{data_type}'> - {data_len} chars"
+                                )
+                            else:
+                                results_data = tool_result.get("results")
+                                data_type = type(results_data).__name__
+                                num_items = (
+                                    len(results_data)
+                                    if results_data
+                                    else "None/Negative"
+                                )
+                                print(
+                                    f"         📊 Tool result data: <class '{data_type}'> - {num_items} items"
+                                )
                         else:
                             print(
                                 f"         📊 Tool result: {type(tool_result)} - {str(tool_result)[:200]}"
@@ -1631,10 +1683,10 @@ When you have successfully found and extracted a suitable source, you MUST outpu
                                                 f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful"
                                             )
 
-                        # Truncate the tool result based on the research role's max_tokens setting
+                        # Post-process results based on tool + role limits
                         if isinstance(tool_result, dict):
                             tool_result = _truncate_response_for_role(
-                                tool_result, "research"
+                                tool_result, "research", tool_name=tool_name
                             )
 
                         # Append ToolMessage for agent observation
@@ -1776,9 +1828,8 @@ def archive_node(state: "DataScoutState") -> Dict:
     using a procedural approach.
     """
     # Load scout config instead of main config for writer paths
-    scout_config = load_scout_config()
-    config = load_claimify_config()
-    llm = create_llm(config, "archive")
+    scout_config = get_active_scout_config()
+    llm = create_llm("archive")
 
     # --- FIX: Get content from research_findings, not messages ---
     provenance = state.get("current_sample_provenance", "synthetic")
@@ -1913,8 +1964,7 @@ Respond ONLY with the Markdown content for the pedigree entry. Do NOT include an
 
 def fitness_node(state: "DataScoutState") -> Dict:
     """The fitness node, responsible for evaluating content and producing a structured report."""
-    config = load_claimify_config()
-    llm = create_llm(config, "fitness")
+    llm = create_llm("fitness")
 
     # --- START: PROVENANCE-AWARE LOGIC (Part 3) ---
     # 1. Retrieve the provenance flag from the state
@@ -2037,8 +2087,7 @@ Evaluate the retrieved content against the mission. Is this document a goldmine 
 
 def synthetic_node(state: DataScoutState) -> Dict:
     """The synthetic node, responsible for generating synthetic data when syntethic results are preferable or when research fails."""
-    config = load_claimify_config()
-    llm = create_llm(config, "synthetic")
+    llm = create_llm("synthetic")
 
     print("🎨 SYNTHETIC NODE: Starting synthetic data generation")
     print(f"   State messages: {len(state.get('messages', []))}")
@@ -2128,11 +2177,20 @@ Focus on creating a book that will be a goldmine for the Copy Editor to extract 
     }
 
 
-def get_node_config(node_name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]:
+def get_node_config(node_name: str) -> Optional[Dict]:
     """Retrieve the configuration for a specific node by name."""
-    config = load_claimify_config()
-    if config.scout_agent and config.scout_agent.mission_plan:
-        return config.scout_agent.mission_plan.get_node_config(node_name)
+    # Load the scout config instead of using the old config.scout_agent
+    scout_config = get_active_scout_config()
+
+    if (
+        scout_config
+        and "mission_plan" in scout_config
+        and "nodes" in scout_config["mission_plan"]
+    ):
+        # Find the node config that matches the node_name
+        for node in scout_config["mission_plan"]["nodes"]:
+            if node.get("name") == node_name:
+                return node
     return None
 
 

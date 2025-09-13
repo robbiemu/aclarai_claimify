@@ -2,10 +2,11 @@
 Configuration management for the Claimify pipeline.
 Handles loading and managing configuration from default and user-provided files.
 """
+
 import importlib.resources as resources
 import logging
 from pathlib import Path
-from typing import Any, Dict, MutableMapping, Optional
+from typing import Any, Dict, Optional
 
 import yaml
 from pydantic import ValidationError
@@ -15,20 +16,14 @@ from .data_models import ClaimifyConfig, OptimizationConfig
 logger = logging.getLogger(__name__)
 
 
-def deep_merge(
-    base: Dict[str, Any], override: Dict[str, Any]
-) -> Dict[str, Any]:
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
     Recursively merge two dictionaries.
     Values in `override` take precedence over `base`.
     """
     merged = base.copy()
     for key, value in override.items():
-        if (
-            key in merged
-            and isinstance(merged[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = deep_merge(merged[key], value)
         else:
             merged[key] = value
@@ -36,7 +31,7 @@ def deep_merge(
 
 
 def _parse_claimify_config_data(
-    config_data: Dict[str, Any]
+    config_data: Dict[str, Any],
 ) -> Optional[ClaimifyConfig]:
     """
     Parse configuration data from dictionary into ClaimifyConfig.
@@ -57,16 +52,13 @@ def _parse_claimify_config_data(
             "decomposition_model": model_config.get("decomposition"),
             "default_model": model_config.get("default"),
             "max_retries": processing_config.get("max_retries"),
-            "timeout_seconds": config_data.get("processing", {}).get(
-                "timeout_seconds"
-            ),
+            "timeout_seconds": config_data.get("processing", {}).get("timeout_seconds"),
             "temperature": config_data.get("processing", {}).get("temperature"),
             "max_tokens": config_data.get("processing", {}).get("max_tokens"),
             "log_decisions": logging_config.get("log_decisions"),
             "log_transformations": logging_config.get("log_transformations"),
             "log_timing": logging_config.get("log_timing"),
             "generate_dataset": config_data.get("generate_dataset", {}),
-            "scout_agent": config_data.get("scout_agent"),
         }
 
         # Filter out None values so Pydantic uses defaults
@@ -92,9 +84,7 @@ def load_claimify_config(
     """
     try:
         # 1. Load base config from package resources
-        with resources.open_text(
-            "aclarai_claimify.settings", "config.yaml"
-        ) as f:
+        with resources.open_text("aclarai_claimify.settings", "config.yaml") as f:
             base_config_data = yaml.safe_load(f) or {}
     except FileNotFoundError:
         logger.error("Default 'config.yaml' not found in package.")
@@ -137,9 +127,7 @@ def load_optimization_config(
     """
     try:
         # 1. Load base config from package resources
-        with resources.open_text(
-            "aclarai_claimify.settings", "optimization.yaml"
-        ) as f:
+        with resources.open_text("aclarai_claimify.settings", "optimization.yaml") as f:
             base_config_data = yaml.safe_load(f) or {}
     except FileNotFoundError:
         logger.error("Default 'optimization.yaml' not found in package.")

@@ -21,7 +21,7 @@ except AttributeError:
 from .graph import build_graph
 from .mission_runner import MissionRunner
 from .tools import _HAVE_LIBCRAWLER
-from .config import load_scout_config
+from .config import load_scout_config, set_active_scout_config, get_active_scout_config
 
 
 def get_mission_names(mission_plan_path: str) -> list[str]:
@@ -142,9 +142,13 @@ def setup_observability(scout_config: Dict[str, Any]):
         print("Observability configured (LangChain/LangGraph tracing enabled).")
     else:
         if tracing and str(tracing).lower() in {"true", "1", "yes", "on"}:
-            print("Warning: Tracing requested but no API key provided (LANGCHAIN_API_KEY/LANGSMITH_API_KEY).")
+            print(
+                "Warning: Tracing requested but no API key provided (LANGCHAIN_API_KEY/LANGSMITH_API_KEY)."
+            )
         else:
-            print("Note: No LangSmith configuration found. Skipping observability setup.")
+            print(
+                "Note: No LangSmith configuration found. Skipping observability setup."
+            )
 
 
 def run_agent_process(
@@ -153,6 +157,7 @@ def run_agent_process(
     max_samples: Optional[int] = None,
     resume_from: Optional[str] = None,
     scout_config_path: Optional[str] = None,
+    use_robots: bool = True,
 ):
     """Main function to set up and run the scout agent mission."""
     with SqliteSaver.from_conn_string(
@@ -162,7 +167,7 @@ def run_agent_process(
 
         if resume_from:
             # If resuming, mission_name is not required from the command line
-            mission_config = {} # The runner will load the config from the saved state
+            mission_config = {}  # The runner will load the config from the saved state
         else:
             # If starting a new mission, mission_name is required
             available_missions = get_mission_names(mission_plan_path)
@@ -193,9 +198,10 @@ def run_agent_process(
                 )
                 return
 
-        # Load mission-specific configuration
-        scout_config = load_scout_config(scout_config_path)
-        
+        # Load mission-specific configuration once and set active
+        scout_config = load_scout_config(scout_config_path, use_robots=use_robots)
+        set_active_scout_config(scout_config)
+
         # Set up observability with the scout configuration
         setup_observability(scout_config)
         sys.stdout.flush()
@@ -217,8 +223,8 @@ def run_agent_process(
 
         # Determine the recursion limit for each sample generation cycle
         if recursion_limit is None:
-            # Load mission-specific configuration
-            scout_config = load_scout_config(scout_config_path)
+            # Use active configuration established earlier
+            scout_config = get_active_scout_config()
             recursion_limit = scout_config.get("recursion_per_sample", 27)
             print(f"🔐 Using recursion limit from mission config: {recursion_limit}")
         else:
@@ -226,9 +232,13 @@ def run_agent_process(
         sys.stdout.flush()
 
         try:
-            app = build_graph(checkpointer=checkpointer)
+            app = build_graph(checkpointer=checkpointer, scout_config=scout_config)
             mission_runner = MissionRunner(
-                checkpointer=checkpointer, app=app, mission_config=mission_config, resume_from_mission_id=resume_from
+                checkpointer=checkpointer,
+                app=app,
+                mission_config=mission_config,
+                scout_config=scout_config,
+                resume_from_mission_id=resume_from,
             )
             mission_runner.run_mission(
                 recursion_limit=recursion_limit, max_samples=max_samples
@@ -257,23 +267,44 @@ def run(
         None, "--resume-from", help="The mission ID to resume from."
     ),
     config: Optional[str] = typer.Option(
-        None, "--config", "-c", help="Path to scout configuration file (defaults to scout_config.yaml)."
+        None,
+        "--config",
+        "-c",
+        help="Path to scout configuration file (defaults to scout_config.yaml).",
+    ),
+    no_robots: bool = typer.Option(
+        False, "--no-robots", help="Ignore robots.txt rules"
     ),
 ):
-    # Load mission-specific configuration instead of main claimify config
-    scout_config = load_scout_config(config)
-    
+    # Handle --no-robots flag
+    use_robots = not no_robots
+
+    # Set the global use_robots setting
+    from .config import set_global_use_robots
+
+    set_global_use_robots(use_robots)
+
+    print(f"[DEBUG] Setting global use_robots to {use_robots}")
+
+    # Load mission-specific configuration
+    scout_config = load_scout_config(config, use_robots=use_robots)
+    set_active_scout_config(scout_config)
+
+    print(
+        f"[DEBUG] Loaded scout config with use_robots={scout_config.get('use_robots')}"
+    )
+
     # Set up observability with the scout configuration
     setup_observability(scout_config)
-    
+
     run_agent_process(
         mission_name=mission_name,
         recursion_limit=recursion_limit,
         max_samples=max_samples,
         resume_from=resume_from,
         scout_config_path=config,
+        use_robots=use_robots,  # Pass the use_robots parameter
     )
-
 
 
 # Create the CLI app that will be used by the entry point

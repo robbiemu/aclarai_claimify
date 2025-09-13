@@ -1,6 +1,4 @@
-"""
-Production-ready tool implementations for the Data Scout Agent.
-"""
+"Production-ready tool implementations for the Data Scout Agent."
 
 from __future__ import annotations
 import os
@@ -21,7 +19,12 @@ from bs4 import BeautifulSoup
 from langchain_core.tools import tool
 
 from .litesearch import AsyncRateLimitManager, SearchProviderProxy
-from .config import load_scout_config
+from .config import get_active_scout_config
+
+
+TOKEN_CHARACTER_RATIO = 3.5
+
+
 # Avoid circular import with scout_utils by defining a minimal local helper
 def _find_url_field(results: List[Dict[str, Any]]) -> Optional[str]:
     if not results:
@@ -108,13 +111,21 @@ class WebSearchInput(pydantic.BaseModel):
     query: str = pydantic.Field(description="The search query to execute.")
 
 
-def create_web_search_tool():
+def create_web_search_tool(use_robots: bool = True):
     """
     Factory function that creates a web_search tool with the configured provider hard-coded.
     This ensures that the search provider is determined by the configuration, not by the agent.
+
+    Args:
+        use_robots: Whether to respect robots.txt rules.
     """
-    config = load_scout_config()
-    ws_cfg = (config.get("web_search") or {}) if isinstance(config, dict) else {}
+    # Use the active scout configuration established at startup
+    config = get_active_scout_config()
+    ws_cfg = (
+        (config.get("web_search") or {})
+        if isinstance(config.get("web_search"), dict)
+        else {}
+    )
     # Backward compat: fall back to root search_provider if present
     search_provider = ws_cfg.get(
         "provider",
@@ -122,18 +133,18 @@ def create_web_search_tool():
     )
     ws_rps = ws_cfg.get("requests_per_second") or ws_cfg.get("rps")
     # Canonical config key: max_results (backward-compat: accept older names if present)
-    ws_max_results = (
-        ws_cfg.get("max_results")
-        if isinstance(ws_cfg, dict)
-        else None
-    )
+    ws_max_results = ws_cfg.get("max_results") if isinstance(ws_cfg, dict) else None
     if ws_max_results is None and isinstance(ws_cfg, dict):
         # Backward compatibility for older configs
         for legacy_key in ("num_results", "count", "limit"):
             if legacy_key in ws_cfg:
                 ws_max_results = ws_cfg.get(legacy_key)
                 break
-    respect_robots = ws_cfg.get("respect_robots", config.get("use_robots", True))
+    # Respect robots only if the overall config allows it; CLI flag overrides per-tool setting
+    # When overall use_robots is False (e.g., --no-robots), disable robots filtering entirely
+    respect_robots = bool(config.get("use_robots", True)) and bool(
+        ws_cfg.get("respect_robots", True)
+    )
 
     @tool("web_search", args_schema=WebSearchInput)
     def web_search(query: str) -> Dict[str, Any]:
@@ -194,9 +205,7 @@ def create_web_search_tool():
                             if rp.can_fetch("DataScout/1.0", url):
                                 filtered_results.append(result)
                             else:
-                                print(
-                                    f"      ⚠️ Filtering out {url} due to robots.txt"
-                                )
+                                print(f"      ⚠️ Filtering out {url} due to robots.txt")
                         except Exception as e:
                             # If we can't check robots.txt, assume it's okay to proceed
                             print(
@@ -284,43 +293,11 @@ def arxiv_get_content(query: str) -> Dict[str, Any]:
         # Using LangChain's ArxivAPIWrapper for detailed content retrieval
         from langchain_community.utilities import ArxivAPIWrapper
 
-        # Derive limits from scout_config for the research role
-        cfg = load_scout_config()
-        role_max_tokens = None
-        # Prefer mission_plan.nodes entries if present
-        try:
-            for node in (cfg.get("mission_plan", {}) or {}).get("nodes", []) or []:
-                if isinstance(node, dict) and node.get("name") == "research":
-                    role_max_tokens = node.get("max_tokens")
-                    summary_char_limit = node.get("summary_char_limit")
-                    break
-        except Exception:
-            role_max_tokens = None
-            summary_char_limit = None
-        if role_max_tokens is None:
-            role_max_tokens = (
-                ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
-                    "max_tokens"
-                )
-            )
-            if summary_char_limit is None:
-                summary_char_limit = (
-                    ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
-                        "summary_char_limit"
-                    )
-                )
-        if role_max_tokens is None:
-            role_max_tokens = 2000
-        # Compute default char budget per source assuming ~5 sources and reserving overhead
-        default_summary_chars = max(2000, int((int(role_max_tokens) * 4) * 0.8 / 5))
-        max_chars = int(summary_char_limit) if summary_char_limit else default_summary_chars
-
         arxiv_wrapper = ArxivAPIWrapper(
             top_k_results=5,
             ARXIV_MAX_QUERY_LENGTH=300,
             load_max_docs=5,
             load_all_available_meta=False,
-            doc_content_chars_max=max_chars,
         )
 
         # Get detailed documents
@@ -335,9 +312,7 @@ def arxiv_get_content(query: str) -> Dict[str, Any]:
                     "authors": doc.metadata.get("Authors", "N/A"),
                     "published": doc.metadata.get("Published", "N/A"),
                     "summary": doc.metadata.get("Summary", "N/A"),
-                    "content": doc.page_content[:max_chars]
-                    if doc.page_content
-                    else "N/A",
+                    "content": doc.page_content if doc.page_content else "N/A",
                 }
             )
 
@@ -418,40 +393,10 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
         # Using LangChain's WikipediaAPIWrapper for detailed content retrieval
         from langchain_community.utilities import WikipediaAPIWrapper
 
-        # Derive limits from scout_config for the research role
-        cfg = load_scout_config()
-        role_max_tokens = None
-        try:
-            for node in (cfg.get("mission_plan", {}) or {}).get("nodes", []) or []:
-                if isinstance(node, dict) and node.get("name") == "research":
-                    role_max_tokens = node.get("max_tokens")
-                    summary_char_limit = node.get("summary_char_limit")
-                    break
-        except Exception:
-            role_max_tokens = None
-            summary_char_limit = None
-        if role_max_tokens is None:
-            role_max_tokens = (
-                ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
-                    "max_tokens"
-                )
-            )
-            if summary_char_limit is None:
-                summary_char_limit = (
-                    ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
-                        "summary_char_limit"
-                    )
-                )
-        if role_max_tokens is None:
-            role_max_tokens = 2000
-        default_summary_chars = max(2000, int((int(role_max_tokens) * 4) * 0.8 / 5))
-        max_chars = int(summary_char_limit) if summary_char_limit else default_summary_chars
-
         wikipedia_wrapper = WikipediaAPIWrapper(
             top_k_results=3,
             lang="en",
             load_all_available_meta=False,
-            doc_content_chars_max=max_chars,
         )
 
         # Get detailed documents
@@ -464,9 +409,7 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
                 {
                     "title": doc.metadata.get("title", "N/A"),
                     "summary": doc.metadata.get("summary", "N/A"),
-                    "content": doc.page_content[:max_chars]
-                    if doc.page_content
-                    else "N/A",
+                    "content": doc.page_content if doc.page_content else "N/A",
                 }
             )
 
@@ -491,7 +434,9 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
 # -------------------------
 
 
-def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str, Any]:
+def _truncate_response_for_role(
+    response: Dict[str, Any], role: str, tool_name: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Truncate tool responses based on the max_tokens setting for the given role.
 
@@ -502,10 +447,73 @@ def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str
     Returns:
         The response, possibly with truncated results
     """
-    # Load the configuration to get max_tokens for the role
-    config = load_scout_config()
+    # If tool_name is provided, apply category-specific caps
+    if tool_name:
+        try:
+            search_like = {
+                "web_search",
+                "arxiv_search",
+                "wikipedia_search",
+                "arxiv_get_content",
+                "wikipedia_get_content",
+            }
+            fetch_like = {"url_to_markdown", "documentation_crawler"}
 
-    # Resolve max_tokens from mission_plan.nodes first, fall back to nodes[role]
+            summary_char_limit, result_char_limit = _get_research_limits_from_config()
+
+            if tool_name in search_like:
+                items = response.get("results")
+                if isinstance(items, list):
+                    new_items = []
+                    for item in items:
+                        if isinstance(item, str):
+                            if len(item) > summary_char_limit:
+                                new_items.append(
+                                    item[:summary_char_limit] + "\n[Entry truncated]"
+                                )
+                            else:
+                                new_items.append(item)
+                        elif isinstance(item, dict):
+                            truncated = dict(item)
+                            for k in (
+                                "summary",
+                                "content",
+                                "snippet",
+                                "description",
+                                "text",
+                            ):
+                                v = truncated.get(k)
+                                if isinstance(v, str) and len(v) > summary_char_limit:
+                                    truncated[k] = (
+                                        v[:summary_char_limit] + "\n[Entry truncated]"
+                                    )
+                            new_items.append(truncated)
+                        else:
+                            new_items.append(item)
+                    response["results"] = new_items
+
+            if tool_name in fetch_like:
+                if "markdown" in response and isinstance(response["markdown"], str):
+                    if len(response["markdown"]) > result_char_limit:
+                        response["markdown"] = (
+                            response["markdown"][:result_char_limit]
+                            + "\n\n[Markdown truncated due to size]"
+                        )
+                if "full_markdown" in response and isinstance(
+                    response["full_markdown"], str
+                ):
+                    if len(response["full_markdown"]) > result_char_limit:
+                        response["full_markdown"] = (
+                            response["full_markdown"][:result_char_limit]
+                            + "\n\n[Content truncated due to size]"
+                        )
+        except Exception:
+            # Fail open; don't break tool chain on truncation errors
+            return response
+        return response
+
+    # Backward-compatible behavior: token-estimated truncation when no tool context
+    config = get_active_scout_config()
     max_tokens = None
     try:
         for node in (config.get("mission_plan", {}) or {}).get("nodes", []) or []:
@@ -515,32 +523,82 @@ def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str
     except Exception:
         max_tokens = None
     if max_tokens is None:
-        max_tokens = (((config.get("nodes", {}) or {}).get(role, {}) or {}).get(
+        max_tokens = ((config.get("nodes", {}) or {}).get(role, {}) or {}).get(
             "max_tokens"
-        ))
-    # If still undefined, use a reasonable default
+        )
     if max_tokens is None:
         max_tokens = 2000
 
-    # Fields that might contain large text content
     text_fields = ["results", "markdown", "content", "text", "output"]
-
-    # Check each text field and truncate if necessary
     for field in text_fields:
         if field in response and isinstance(response[field], str):
-            # Rough approximation: assume 1 token ≈ 4 characters
-            max_chars = int(max_tokens) * 4
-
-            # If the field content is longer than our limit, truncate it
+            max_chars = int(max_tokens) * TOKEN_CHARACTER_RATIO
             if len(response[field]) > max_chars:
                 truncated = response[field][:max_chars]
-                # Add a note that the response was truncated
                 response[field] = (
                     truncated
                     + f"\n\n[Response truncated to {max_chars} characters due to token limits for role '{role}']"
                 )
 
     return response
+
+
+def _get_research_limits_from_config() -> tuple[int, int]:
+    """Fetch (summary_char_limit, result_char_limit) for the research node.
+
+    Returns:
+        A tuple of (summary_char_limit, result_char_limit)
+    """
+    cfg = get_active_scout_config()
+    summary_char_limit = None
+    result_char_limit = None
+
+    try:
+        for node in (cfg.get("mission_plan", {}) or {}).get("nodes", []) or []:
+            if isinstance(node, dict) and node.get("name") == "research":
+                summary_char_limit = node.get("summary_char_limit")
+                result_char_limit = node.get("result_char_limit")
+                break
+    except Exception:
+        summary_char_limit = None
+        result_char_limit = None
+
+    if summary_char_limit is None:
+        summary_char_limit = (
+            (cfg.get("nodes", {}) or {}).get("research", {}) or {}
+        ).get("summary_char_limit")
+    if result_char_limit is None:
+        result_char_limit = (
+            (cfg.get("nodes", {}) or {}).get("research", {}) or {}
+        ).get("result_char_limit")
+
+    # Derive a reasonable default for summary_char_limit if not present
+    if summary_char_limit is None:
+        # Use mission plan research max_tokens, else 2000
+        role_max_tokens = None
+        try:
+            for node in (cfg.get("mission_plan", {}) or {}).get("nodes", []) or []:
+                if isinstance(node, dict) and node.get("name") == "research":
+                    role_max_tokens = node.get("max_tokens")
+                    break
+        except Exception:
+            role_max_tokens = None
+        if role_max_tokens is None:
+            role_max_tokens = (
+                (cfg.get("nodes", {}) or {}).get("research", {}) or {}
+            ).get("max_tokens")
+        if role_max_tokens is None:
+            role_max_tokens = 2000
+        # Default ~80% of 4 chars/token budget across 5 sources
+        summary_char_limit = max(2000, int((int(role_max_tokens) * 4) * 0.8 / 5))
+
+    if result_char_limit is None:
+        result_char_limit = 65536
+
+    return int(summary_char_limit), int(result_char_limit)
+
+
+# removed: apply_tool_result_limits (logic merged into _truncate_response_for_role)
 
 
 def _safe_request_get(
@@ -631,7 +689,7 @@ def _extract_main_text_and_title(
     ):
         tag.decompose()
     content_text = soup.get_text(" ", strip=True)
-    content_text = re.sub(r"\s+\n", "\n", content_text)
+    content_text = re.sub(r" \s+\n", "\n", content_text)
     content_text = re.sub(r"[ \t]{2,}", " ", content_text).strip()
     return {"title": title, "text": content_text}
 
@@ -641,14 +699,14 @@ def _to_markdown_simple(
 ) -> str:
     """Produce a simple Markdown representation."""
     parts = []
+    if title:
+        parts.append(f"# {title}\n")
     if add_front_matter:
         fm = {
             "source_url": url or "",
             "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        parts.append(f"\n")
-    if title:
-        parts.append(f"# {title}\n")
+        parts.append(f"\n{fm}\n\n")
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     for p in paragraphs:
         parts.append(p + "\n")
@@ -704,7 +762,7 @@ def url_to_markdown(
     Returns a dictionary with status, URL, markdown, title, and a text snippet.
     """
     # Load config and determine if we should check robots.txt
-    config = load_scout_config()
+    config = get_active_scout_config()
     check_robots = config.get("use_robots", True)
 
     try:
@@ -736,12 +794,47 @@ def url_to_markdown(
         resp = _safe_request_get(url, timeout_s=timeout_s, max_retries=max_retries)
         html = resp.text
         extracted = _extract_main_text_and_title(html, css_selector=css_selector)
-        markdown = _to_markdown_simple(
-            extracted["title"],
-            extracted["text"],
-            url=url,
-            add_front_matter=add_front_matter,
-        )
+
+        # Prefer rich HTML->Markdown via attachments if available
+        markdown = None
+        try:
+            from attachments import attach, present  # type: ignore
+
+            # Write HTML to a temporary file to preserve structure for conversion
+            with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as tf:
+                tf.write(html)
+                temp_path = tf.name
+            try:
+                md = attach(temp_path) | present.markdown
+                if isinstance(md, str) and md.strip():
+                    # Optionally add minimal front matter and title if missing
+                    parts_md = []
+                    if extracted.get("title") and not md.lstrip().startswith("# "):
+                        parts_md.append(f"# {extracted['title']}\n")
+                    if add_front_matter:
+                        fm = {
+                            "source_url": url or "",
+                            "extracted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        }
+                        parts_md.append(f"\n{fm}\n\n")
+                    parts_md.append(md)
+                    markdown = "\n".join(parts_md).strip()
+            finally:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+        except Exception:
+            markdown = None
+
+        if not markdown:
+            markdown = _to_markdown_simple(
+                extracted["title"],
+                extracted["text"],
+                url=url,
+                add_front_matter=add_front_matter,
+            )
+
         snippet = extracted["text"][:500].strip()
         return {
             "url": url,
@@ -821,7 +914,7 @@ if _HAVE_LIBCRAWLER:
 
         # Enhanced pre-scan with better path analysis
         try:
-            config = load_scout_config()
+            config = get_active_scout_config()
             resp = _safe_request_get(start_url, timeout_s=timeout_s, max_retries=1)
             soup = BeautifulSoup(resp.text, "html5lib")
             hrefs = {
@@ -1017,12 +1110,12 @@ def get_available_tools() -> List[Callable]:
     return core_tools + optional
 
 
-def get_tools_for_role(role: str) -> List[Callable]:
+def get_tools_for_role(role: str, use_robots: bool = True) -> List[Callable]:
     """Return tools intended for a specific role."""
     role = (role or "").lower()
 
     # Create the web_search tool with the configured provider
-    web_search = create_web_search_tool()
+    web_search = create_web_search_tool(use_robots=use_robots)
 
     all_tools = {
         "web_search": web_search,

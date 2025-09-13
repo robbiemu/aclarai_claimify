@@ -18,12 +18,13 @@ from .nodes import (
 from .tools import get_tools_for_role
 
 
-def build_graph(checkpointer: SqliteSaver):
+def build_graph(checkpointer: SqliteSaver, scout_config: dict):
     """
     Builds and compiles the multi-agent graph with a supervisor.
 
     Args:
         checkpointer: A LangGraph checkpointer instance for persisting state.
+        scout_config: The scout configuration dictionary.
 
     Returns:
         A compiled LangGraph app.
@@ -38,8 +39,10 @@ def build_graph(checkpointer: SqliteSaver):
     workflow.add_node("synthetic", synthetic_node)  # Add synthetic node
 
     # --- Define Role-Specific Tool Nodes ---
-    research_tools = get_tools_for_role("research")
-    archive_tools = get_tools_for_role("archive")
+    use_robots = scout_config.get("use_robots", True)
+    
+    research_tools = get_tools_for_role("research", use_robots=use_robots)
+    archive_tools = get_tools_for_role("archive", use_robots=use_robots)
 
     workflow.add_node("research_tools", ToolNode(research_tools))
     workflow.add_node("archive_tools", ToolNode(archive_tools))

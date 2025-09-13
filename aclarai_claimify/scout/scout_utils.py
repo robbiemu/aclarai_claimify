@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 import yaml
 
-from ..config import load_claimify_config
+from .config import get_active_scout_config
 from .tools import _safe_request_get, _run_async_safely, RATE_MANAGER, HTTP_CLIENT
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class SearchResultsValidator:
 
     def __init__(self, tool_name: str, config=None):
         self.tool_name = tool_name
-        self.config = config or load_claimify_config()
+        self.config = config or get_active_scout_config()
         self._load_tool_config()
 
     def _load_tool_config(self):
@@ -60,17 +60,15 @@ class SearchResultsValidator:
         self.retry_on_failure = True
         self.max_retries = DEFAULT_MAX_RETRIES
 
-        # Override with config values if available
-        if self.config.scout_agent and self.config.scout_agent.mission_plan:
-            tool_config = self.config.scout_agent.mission_plan.get_tool_config(
-                self.tool_name
-            )
-            if tool_config:
-                self.prefetch_enabled = tool_config.pre_fetch_pages
-                self.prefetch_limit = tool_config.pre_fetch_limit
-                self.validate_urls = tool_config.validate_urls
-                self.retry_on_failure = tool_config.retry_on_failure
-                self.max_retries = tool_config.max_retries
+        # Load structured scout config to get tool configuration
+        scout_config = get_active_scout_config()
+        tool_config = scout_config.get_tool_config(self.tool_name)
+        if tool_config:
+            self.prefetch_enabled = tool_config.pre_fetch_pages
+            self.prefetch_limit = tool_config.pre_fetch_limit
+            self.validate_urls = tool_config.validate_urls
+            self.retry_on_failure = tool_config.retry_on_failure
+            self.max_retries = tool_config.max_retries
 
     def validate_search_results(
         self,

@@ -51,6 +51,15 @@ result = documentation_crawler(
 )
 ```
 
+## URL to Markdown Conversion
+
+The `url_to_markdown` tool converts a single web page into Markdown.
+
+- When the `attachments` package is available, it uses the pipeline `attach(file_or_url) | present.markdown` for high-fidelity HTML→Markdown conversion.
+- If `attachments` is unavailable or conversion fails, it falls back to a simple, robust extractor that strips scripts/styles and emits minimal Markdown.
+
+Robots.txt is respected by default based on the global `use_robots` setting in the scout config.
+
 ## Tool Configuration and Validation
 
 All search tools support advanced configuration options for prefetching and validation to make the research process more robust:
@@ -80,8 +89,18 @@ missions:
 
 See the [Data Scout Agent Guide](../guides/data-scout-agent.md#65-advanced-configuration-tool-prefetching-and-validation) for complete documentation of tool configuration options.
 
-## Response Truncation
+## Result Size Limits (Post-Tool)
 
-All search tools automatically truncate their responses based on the max_tokens setting for the calling agent role. This prevents overwhelming the model with too much information. When a response is truncated, a note is added indicating the truncation.
+The Data Scout Agent enforces result size limits after each tool call:
 
-Both tools are rate-limited to prevent abuse and ensure fair usage.
+- Search-like tools (web_search, arxiv_search, wikipedia_search, arxiv_get_content, wikipedia_get_content):
+  - Per-entry truncation to `summary_char_limit` configured on the research node.
+- Fetch-like tools (url_to_markdown, documentation_crawler):
+  - Truncate final markdown (`markdown` or `full_markdown`) to `result_char_limit` on the research node.
+
+Notes:
+- If `summary_char_limit` is not set, a default is derived from the research node's `max_tokens` (≈80% of 4 chars/token across 5 sources).
+- If `result_char_limit` is not set, it defaults to 65,536 characters.
+- Truncation annotations are appended (e.g., "[Entry truncated]", "[Markdown truncated due to size]").
+
+All tools are rate-limited to prevent abuse and ensure fair usage.

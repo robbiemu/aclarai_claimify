@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from textual.widgets import Static
-from rich.console import Console
 from rich.text import Text
 
 
@@ -99,12 +98,14 @@ class StatsHeader(Static):
         # Determine color for synthetic percentage
         synth_color = ""
         synth_color_end = ""
-        
+
         # Calculate target percentage and lambda threshold
         target_synthetic_pct = stats.synthetic_budget * 100  # e.g., 20% for 0.2 budget
         lambda_factor = 0.8
-        lower_threshold_pct = target_synthetic_pct * lambda_factor  # e.g., 16% for 20% target
-        
+        lower_threshold_pct = (
+            target_synthetic_pct * lambda_factor
+        )  # e.g., 16% for 20% target
+
         # Color coding logic:
         # - At 0/n progress: Default color (no coloring)
         # - Red if synthetic samples exceed max allowed OR impossible to achieve target
@@ -112,15 +113,17 @@ class StatsHeader(Static):
         # - Default color when within acceptable range
         remaining_samples = stats.target - stats.completed
         max_possible_synthetic = stats.synthetic_completed + remaining_samples
-        
-        if (stats.synthetic_completed > stats.max_synthetic_allowed or 
-            max_possible_synthetic < stats.max_synthetic_allowed):
+
+        if (
+            stats.synthetic_completed > stats.max_synthetic_allowed
+            or max_possible_synthetic < stats.max_synthetic_allowed
+        ):
             # Red if exceeded budget or impossible to achieve minimum target
             synth_color = "[red]"
             synth_color_end = "[/red]"
-        elif (stats.completed > 0 and 
-              (synthetic_pct > target_synthetic_pct or 
-               synthetic_pct < lower_threshold_pct)):
+        elif stats.completed > 0 and (
+            synthetic_pct > target_synthetic_pct or synthetic_pct < lower_threshold_pct
+        ):
             # Orange if above target or below lambda threshold (but only when completed > 0)
             synth_color = "[orange1]"
             synth_color_end = "[/orange1]"
@@ -131,7 +134,7 @@ class StatsHeader(Static):
             synthetic_text.stylize("red")
         elif synth_color == "[orange1]":
             synthetic_text.stylize("orange1")
-        
+
         # Build the full status line using Rich Text
         status_text = Text()
         status_text.append(f"📊 Progress: {stats.completed}/{stats.target} (")
@@ -139,9 +142,11 @@ class StatsHeader(Static):
         status_text.append(") | ")
         status_text.append(f"⏱️  Elapsed: {stats.elapsed_human} | ")
         status_text.append(f"🎯 ETA: {stats.eta_human} | ")
-        status_text.append(f"🤖 Activity: {stats.current_recursion_step}/{stats.total_recursion_steps} | ")
+        status_text.append(
+            f"🤖 Activity: {stats.current_recursion_step}/{stats.total_recursion_steps} | "
+        )
         status_text.append(f"❌ Errors: {stats.errors}")
-        
+
         # For debug logging, keep the markup string version
         synthetic_display = f"{synth_color}{synthetic_pct:.0f}% synth{synth_color_end}"
         status_line = (
@@ -156,7 +161,9 @@ class StatsHeader(Static):
         try:
             with open("/tmp/tui_debug.log", "a") as f:
                 f.write(f"STATS HEADER UPDATE: {status_line}\n")
-                f.write(f"  Synthetic %: {synthetic_pct:.1f}% (target: {target_synthetic_pct}%), Color: {synth_color or 'default'}\n")
+                f.write(
+                    f"  Synthetic %: {synthetic_pct:.1f}% (target: {target_synthetic_pct}%), Color: {synth_color or 'default'}\n"
+                )
         except Exception:
             pass
 

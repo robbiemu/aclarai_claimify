@@ -6,9 +6,10 @@ from typing import Optional
 class AgentProcessManager:
     """Manages the lifecycle of the agent subprocess."""
 
-    def __init__(self, mission_name: str, recursion_limit: int):
+    def __init__(self, mission_name: str, recursion_limit: int, use_robots: bool = True):
         self.mission_name = mission_name
         self.recursion_limit = recursion_limit
+        self.use_robots = use_robots
         self.process: Optional[asyncio.subprocess.Process] = None
 
     async def start(self) -> asyncio.subprocess.Process:
@@ -20,6 +21,10 @@ class AgentProcessManager:
             "--recursion-limit",
             str(self.recursion_limit),
         ]
+        
+        # Add --no-robots flag if use_robots is False
+        if not self.use_robots:
+            command.append("--no-robots")
         
         # Use the current environment without forcing any variables
         env = os.environ.copy()

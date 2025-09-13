@@ -9,7 +9,7 @@ import logging
 import math
 import sqlite3
 import uuid
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 from .config import load_scout_config
 
 from langchain_core.messages import HumanMessage
@@ -19,8 +19,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
- 
 
 
 class MissionStateManager:
@@ -85,10 +83,12 @@ class MissionRunner:
         checkpointer: SqliteSaver,
         app,
         mission_config: Dict[str, Any],
+        scout_config: Dict[str, Any],
         resume_from_mission_id: Optional[str] = None,
     ):
         """Initialize the MissionRunner with a mission configuration."""
         self.mission_config = mission_config
+        self.scout_config = scout_config
         self.checkpointer = checkpointer
         self.app = app
         self.state_manager = MissionStateManager("checkpoints/mission_checkpoints.db")
@@ -99,19 +99,24 @@ class MissionRunner:
         mission_name = self.mission_config.get("name")
         target_size = self.mission_config.get("target_size", 0)
         goals = self.mission_config.get("goals", [])
-        
+
         # Load scout config for writer paths and recursion limit
-        scout_config = load_scout_config()
-        writer_config = scout_config.get("writer", {})
+        writer_config = self.scout_config.get("writer", {})
         pedigree_path = writer_config.get("audit_trail_path", "examples/PEDIGREE.md")
-        max_recursion_steps = scout_config.get("recursion_per_sample", 30)
+        max_recursion_steps = self.scout_config.get("recursion_per_sample", 30)
 
         progress = {
             mission_name: {
                 goal["characteristic"]: {
                     "target": target_size,
                     "collected": 0,
-                    "topics": {topic: {"collected": 0, "target": math.ceil(target_size / len(goal["topics"]))} for topic in goal["topics"]},
+                    "topics": {
+                        topic: {
+                            "collected": 0,
+                            "target": math.ceil(target_size / len(goal["topics"])),
+                        }
+                        for topic in goal["topics"]
+                    },
                 }
                 for goal in goals
             }
@@ -142,7 +147,9 @@ class MissionRunner:
             mission_id = self.resume_from_mission_id
             mission_state = self.state_manager.get_mission_state(mission_id)
             if not mission_state:
-                logging.error(f"❌ Could not find mission with ID '{mission_id}' to resume.")
+                logging.error(
+                    f"❌ Could not find mission with ID '{mission_id}' to resume."
+                )
                 return
             logging.info(f"🔄 Resuming mission with ID: {mission_id}")
         else:
@@ -195,7 +202,7 @@ class MissionRunner:
         # Check if we should enter cached-only mode
         carryover = mission_state.get("next_cycle_cached_reuse", {"active": False})
         is_cached_reuse = carryover.get("active", False)
-        
+
         base_state = {
             "run_id": thread_id,
             "mission_id": mission_id,
@@ -219,32 +226,42 @@ class MissionRunner:
             # Always seed excluded URLs
             "excluded_urls": mission_state.get("excluded_urls", []),
             # Carry over sample counters
-            "synthetic_samples_generated": mission_state.get("synthetic_samples_generated", 0),
-            "research_samples_generated": mission_state.get("research_samples_generated", 0),
+            "synthetic_samples_generated": mission_state.get(
+                "synthetic_samples_generated", 0
+            ),
+            "research_samples_generated": mission_state.get(
+                "research_samples_generated", 0
+            ),
             # Add recursion tracking
             "step_count": 0,
             "max_recursion_steps": mission_state.get("max_recursion_steps", 30),
         }
-        
+
         if is_cached_reuse:
             # Enter cached-only mode
-            base_state.update({
-                "cached_only_mode": True,
-                "no_search_tools": True,
-                "allowed_url_whitelist": carryover.get("allowed_url_whitelist", []),
-                "current_task": carryover.get("current_task"),
-                "research_session_cache": carryover.get("research_session_cache", []),
-                "cached_exhausted": False,
-            })
+            base_state.update(
+                {
+                    "cached_only_mode": True,
+                    "no_search_tools": True,
+                    "allowed_url_whitelist": carryover.get("allowed_url_whitelist", []),
+                    "current_task": carryover.get("current_task"),
+                    "research_session_cache": carryover.get(
+                        "research_session_cache", []
+                    ),
+                    "cached_exhausted": False,
+                }
+            )
         else:
             # Normal mode
-            base_state.update({
-                "cached_only_mode": False,
-                "no_search_tools": False,
-                "allowed_url_whitelist": [],
-                "cached_exhausted": False,
-            })
-            
+            base_state.update(
+                {
+                    "cached_only_mode": False,
+                    "no_search_tools": False,
+                    "allowed_url_whitelist": [],
+                    "cached_exhausted": False,
+                }
+            )
+
         return base_state
 
     def run_full_cycle(self, thread_id: str, recursion_limit: int):
@@ -258,13 +275,22 @@ class MissionRunner:
         inputs = {
             "messages": [HumanMessage(content="Start the data generation cycle.")]
         }
+        
+        print(f"[DEBUG] Starting cycle for thread {thread_id}")
 
-        for event in self.app.stream(inputs, config=thread_config):
-            for node_name, node_output in event.items():
-                if "messages" in node_output:
-                    # Minimal logging to avoid clutter
-                    pass
-        logging.info(f"  -> Cycle for thread {thread_id} finished.")
+        try:
+            for event in self.app.stream(inputs, config=thread_config):
+                print(f"[DEBUG] Received event from app.stream: {list(event.keys())}")
+                for node_name, node_output in event.items():
+                    if "messages" in node_output:
+                        # Minimal logging to avoid clutter
+                        pass
+            logging.info(f"  -> Cycle for thread {thread_id} finished.")
+        except Exception as e:
+            import traceback
+            print(f"[DEBUG] Exception in run_full_cycle: {e}")
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            raise
 
     def _update_mission_progress(
         self, mission_id: str, thread_id: str
@@ -294,17 +320,22 @@ class MissionRunner:
 
         # Update the detailed breakdown
         if generated_characteristic and generated_topic:
-            if generated_characteristic in mission_state["progress"][mission_state["mission_name"]]:
-                mission_state["progress"][mission_state["mission_name"]][generated_characteristic]["collected"] += 1
+            if (
+                generated_characteristic
+                in mission_state["progress"][mission_state["mission_name"]]
+            ):
+                mission_state["progress"][mission_state["mission_name"]][
+                    generated_characteristic
+                ]["collected"] += 1
                 if (
                     generated_topic
-                    in mission_state["progress"][mission_state["mission_name"]][generated_characteristic][
-                        "topics"
-                    ]
+                    in mission_state["progress"][mission_state["mission_name"]][
+                        generated_characteristic
+                    ]["topics"]
                 ):
-                    mission_state["progress"][mission_state["mission_name"]][generated_characteristic][
-                        "topics"
-                    ][generated_topic]["collected"] += 1
+                    mission_state["progress"][mission_state["mission_name"]][
+                        generated_characteristic
+                    ]["topics"][generated_topic]["collected"] += 1
 
         # Update total counts
         mission_state["samples_generated"] = final_cycle_state.get(
@@ -319,7 +350,7 @@ class MissionRunner:
 
         # Update the last thread ID
         mission_state["last_thread_id"] = thread_id
-        
+
         # Persist cached reuse state
         mission_state["excluded_urls"] = final_cycle_state.get(
             "excluded_urls", mission_state.get("excluded_urls", [])
@@ -327,7 +358,7 @@ class MissionRunner:
         mission_state["next_cycle_cached_reuse"] = final_cycle_state.get(
             "next_cycle_cached_reuse", {"active": False}
         )
-        
+
         # If cached is exhausted or quotas reached, force carryover inactive
         if final_cycle_state.get("cached_exhausted"):
             mission_state["next_cycle_cached_reuse"] = {"active": False}

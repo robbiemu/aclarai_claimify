@@ -8,7 +8,7 @@ from collections import deque
 
 # Import all the necessary wrappers from the LangChain ecosystem
 from langchain_community.utilities import (
-    BraveSearchWrapper,
+    # BraveSearchWrapper,
     BingSearchAPIWrapper,
     SerpAPIWrapper,
     WikipediaAPIWrapper,
@@ -177,17 +177,23 @@ class SearchProviderProxy:
             "wikipedia/search": WikipediaAPIWrapper,
             "arxiv/search": ArxivAPIWrapper,
         }
-        
+
         # Special handling for providers that need additional configuration
         if self.provider == "google/search":
             # Google Search needs API key and CSE ID
             api_key = os.getenv("GOOGLE_SEARCH_API_KEY")
             cse_id = os.getenv("CSE_ID")
             if not api_key:
-                raise ValueError("GOOGLE_SEARCH_API_KEY environment variable not set for Google Search provider")
+                raise ValueError(
+                    "GOOGLE_SEARCH_API_KEY environment variable not set for Google Search provider"
+                )
             if not cse_id:
-                raise ValueError("CSE_ID environment variable not set for Google Search provider")
-            return GoogleSearchAPIWrapper(google_api_key=api_key, google_cse_id=cse_id), False
+                raise ValueError(
+                    "CSE_ID environment variable not set for Google Search provider"
+                )
+            return GoogleSearchAPIWrapper(
+                google_api_key=api_key, google_cse_id=cse_id
+            ), False
         elif self.provider == "duckduckgo/search":
             return DuckDuckGoSearchRun(), False
 
@@ -265,7 +271,9 @@ class SearchProviderProxy:
                     )
 
                 # SerpAPI: structured via results(query, num=)
-                if self.provider == "serpapi/search" and hasattr(self.client, "results"):
+                if self.provider == "serpapi/search" and hasattr(
+                    self.client, "results"
+                ):
                     num = max_results if max_results is not None else 10
                     # Pass as positional to avoid kwarg mismatches across versions
                     return await asyncio.to_thread(self.client.results, query, num)
@@ -275,7 +283,9 @@ class SearchProviderProxy:
                     kwargs_local = {}
                     if max_results is not None:
                         kwargs_local["max_results"] = max_results
-                    return await asyncio.to_thread(self.client.search, query, **kwargs_local)
+                    return await asyncio.to_thread(
+                        self.client.search, query, **kwargs_local
+                    )
 
                 # You.com: run(query, num_web_results=)
                 if self.provider == "you/search" and hasattr(self.client, "run"):

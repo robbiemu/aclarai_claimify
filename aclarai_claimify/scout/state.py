@@ -2,11 +2,12 @@
 """
 Defines the overall state for the Data Scout agent graph.
 """
+
 from typing import TypedDict, List, Dict, Optional, Annotated, Any
 from langgraph.graph.message import add_messages
 
-# Import the new model
 from .models import FitnessReport
+
 
 class DataScoutState(TypedDict):
     strategy_block: str

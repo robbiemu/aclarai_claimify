@@ -35,7 +35,7 @@ from .scout.tui.agent_output_parser import (
     SyntheticSampleUpdate,
     RecursionStepUpdate,
 )
-from .scout.config import load_scout_config
+from .scout.config import load_scout_config, set_active_scout_config
 from .scout.scout_utils import get_mission_details_from_file
 
 
@@ -610,6 +610,11 @@ class DataScoutTUI(App):
         scout_config = load_scout_config(
             self.scout_config_path, use_robots=self.use_robots
         )
+        # Set active config for TUI context as well (non-subprocess usage)
+        try:
+            set_active_scout_config(scout_config)
+        except Exception:
+            pass
         recursion_limit = scout_config.get("recursion_per_sample", 27)
 
         # Get synthetic budget and target size from mission config (not scout config)
@@ -626,6 +631,7 @@ class DataScoutTUI(App):
         self.agent_process_manager = AgentProcessManager(
             mission_name=mission_name,
             recursion_limit=recursion_limit,
+            use_robots=self.use_robots,
         )
 
         self.stats_header = StatsHeader()

@@ -200,10 +200,10 @@ def _direct_ollama_call_with_tools(
         # Determine timeout - use provided timeout, config timeout, or default to 120 seconds
         if timeout is None:
             try:
-                from ..config import load_claimify_config
+                from .config import get_active_scout_config
 
-                config = load_claimify_config()
-                timeout = config.timeout_seconds
+                config = get_active_scout_config()
+                timeout = config.get("timeout_seconds", 120)
                 print(f"🕐 Using config timeout: {timeout}s")
             except Exception:
                 timeout = 120  # Default to 2 minutes for large models
@@ -522,10 +522,10 @@ try:
 
                         # Get timeout from config for consistency
                         try:
-                            from ..config import load_claimify_config
+                            from .config import get_active_scout_config
 
-                            config = load_claimify_config()
-                            timeout = config.timeout_seconds
+                            config = get_active_scout_config()
+                            timeout = config.get("timeout_seconds", 120)
                         except Exception:
                             timeout = 120  # Default timeout
 
