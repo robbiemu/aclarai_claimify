@@ -45,6 +45,7 @@ class DataScoutState(TypedDict):
         next_cycle_cached_reuse: Plan for next cycle's cached reuse behavior.
         step_count: Counter for tracking recursion steps in the agent graph.
         max_recursion_steps: Maximum allowed recursion steps for the agent graph.
+        session_tool_domain_blocklist: List of (tool_name, domain) tuples that have failed in the current session.
     """
     messages: Annotated[list, add_messages]
     run_id: str
@@ -77,3 +78,4 @@ class DataScoutState(TypedDict):
     next_cycle_cached_reuse: Optional[Dict[str, Any]]
     step_count: int
     max_recursion_steps: int
+    session_tool_domain_blocklist: List[tuple[str, str]]

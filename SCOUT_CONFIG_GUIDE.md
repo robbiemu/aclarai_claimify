@@ -16,7 +16,10 @@ Created `scout_config.yaml` in the project root containing all mission parameter
 
 ```yaml
 # Mission Configuration for Data Scout Agent
-search_provider: "brave/search"
+web_search:
+  provider: "brave/search"
+  respect_robots: true
+  requests_per_second: 2.0
 recursion_per_sample: 30
 initial_prompt: |
   Begin the data prospecting mission based on your configured mission plan.
@@ -69,6 +72,43 @@ aclarai-claimify-datascout-tui --config my_scout_config.yaml
 **Previously**: Samples were going to `output/approved_books/` (hardcoded) while the config specified `examples/data/datasets/tier1/`
 
 **Now**: The archive node properly reads the `writer.tier1_path` from the scout config and saves samples there.
+
+## Web Search Configuration
+
+You can configure the web search provider and behavior via the `web_search` section:
+
+```yaml
+web_search:
+  provider: "duckduckgo/search"    # or brave/search, google/search, tavily/search, etc.
+  respect_robots: true              # overrides global use_robots for web_search
+  requests_per_second: 2.0          # RPS for providers without header-based rate limits
+  max_results: 10                   # Canonical result cap (proxy maps per provider)
+```
+
+Notes:
+- `provider` falls back to the legacy root `search_provider` if `web_search.provider` is not set.
+- `respect_robots` affects only the web_search tool; other tools keep using the global `use_robots`.
+- `requests_per_second` controls throttling for non-header-based providers (e.g., DuckDuckGo, Wikipedia wrappers). For header-based providers (e.g., Brave), rate limiting uses response headers.
+- `max_results` is the canonical field. The proxy maps it internally to provider-specific params (e.g., `num_results`, `count`, `num_web_results`). Older keys like `num_results`, `count`, and `limit` are accepted for backward compatibility but should be migrated.
+
+### Per-source Summary Limits
+
+You can control how much content is pulled per source document for tools like `arxiv_get_content` and `wikipedia_get_content`:
+
+```yaml
+mission_plan:
+  nodes:
+    - name: "research"
+      model: "openai/gpt-5-mini"
+      temperature: 1
+      max_tokens: 65536
+      summary_char_limit: 6000   # Optional per-source content cap (characters)
+```
+
+If `summary_char_limit` is omitted, the system derives a default assuming up to ~5 sources per cycle and reserving overhead:
+
+- Default: `max(2000, int(max_tokens * 4 * 0.8 / 5))`
+- This roughly allocates 80% of the research role’s character budget across 5 sources and keeps 20% for prompts and reasoning.
 
 ## Usage Examples
 

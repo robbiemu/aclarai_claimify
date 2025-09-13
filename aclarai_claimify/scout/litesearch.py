@@ -222,7 +222,7 @@ class SearchProviderProxy:
         # Return the original results format - let the validation handle normalization
         return data["web"]["results"]
 
-    async def run(self, query: str, **kwargs: Any) -> str:
+    async def run(self, query: str, **kwargs: Any) -> Any:
         """
         Runs a search query using the configured provider, respecting rate limits.
 
@@ -231,10 +231,14 @@ class SearchProviderProxy:
             **kwargs: Additional keyword arguments.
 
         Returns:
-            str: The search results as a string.
+            Any: Provider-specific results. For Google Search this returns a
+            structured list of result dicts (via `results()`), while providers
+            that only expose `run()` may return a formatted string.
         """
-        # Use a time-based limit for providers where we don't get headers
-        requests_per_second = 2.0 if not self.is_custom else None
+        # Allow caller to override RPS; default to 2.0 for non-custom providers
+        requests_per_second = kwargs.pop("requests_per_second", None)
+        if requests_per_second is None:
+            requests_per_second = 2.0 if not self.is_custom else None
 
         async with self.rate_limit_manager.acquire(
             self.provider, requests_per_second=requests_per_second
@@ -243,7 +247,49 @@ class SearchProviderProxy:
                 # Custom clients are already async and handle headers
                 return await self.client(query, **kwargs)
             else:
-                # For standard sync wrappers, run them in a thread to avoid blocking
+                # Map a canonical max_results to provider-specific params/methods
+                max_results = kwargs.pop("max_results", None)
+
+                # Google: structured list via results(query, num_results)
+                if self.provider == "google/search" and hasattr(self.client, "results"):
+                    num_results = max_results if max_results is not None else 10
+                    return await asyncio.to_thread(
+                        self.client.results, query, num_results
+                    )
+
+                # Bing: structured list via results(query, num_results=)
+                if self.provider == "bing/search" and hasattr(self.client, "results"):
+                    num_results = max_results if max_results is not None else 10
+                    return await asyncio.to_thread(
+                        self.client.results, query, num_results
+                    )
+
+                # SerpAPI: structured via results(query, num=)
+                if self.provider == "serpapi/search" and hasattr(self.client, "results"):
+                    num = max_results if max_results is not None else 10
+                    # Pass as positional to avoid kwarg mismatches across versions
+                    return await asyncio.to_thread(self.client.results, query, num)
+
+                # Tavily: prefer search(query, max_results=)
+                if self.provider == "tavily/search" and hasattr(self.client, "search"):
+                    kwargs_local = {}
+                    if max_results is not None:
+                        kwargs_local["max_results"] = max_results
+                    return await asyncio.to_thread(self.client.search, query, **kwargs_local)
+
+                # You.com: run(query, num_web_results=)
+                if self.provider == "you/search" and hasattr(self.client, "run"):
+                    if max_results is not None:
+                        kwargs["num_web_results"] = max_results
+                    return await asyncio.to_thread(self.client.run, query, **kwargs)
+
+                # Brave custom: map to 'count'
+                if self.provider == "brave/search" and self.is_custom:
+                    if max_results is not None:
+                        kwargs["count"] = max_results
+                    return await self.client(query, **kwargs)
+
+                # Default path: run() with any remaining kwargs
                 if not hasattr(self.client, "run"):
                     raise NotImplementedError(
                         f"Client for '{self.provider}' has no 'run' method."

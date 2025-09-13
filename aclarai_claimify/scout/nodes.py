@@ -36,6 +36,10 @@ from ..data_models import ScoutAgentMissionPlanNodeConfig
 from pydantic import BaseModel, Field
 
 
+# Define the minimum step cost for a successful research cycle
+MIN_STEPS_FOR_SUCCESSFUL_RESEARCH = 9
+
+
 class SupervisorDecision(BaseModel):
     """Defines the structured decision output for the supervisor LLM."""
 
@@ -110,11 +114,18 @@ def supervisor_node(state: DataScoutState) -> Dict:
     """The supervisor node, now driven by a progress tracker."""
     config = load_claimify_config()
     llm = create_llm(config, "supervisor")
-    
+
     # Track recursion step
     step_count = state.get("step_count", 0)
     max_recursion_steps = state.get("max_recursion_steps", 30)  # Default value
-    
+
+    # Check if research is off-limits due to insufficient remaining steps
+    steps_remaining = max_recursion_steps - step_count
+    research_is_off_limits = steps_remaining < MIN_STEPS_FOR_SUCCESSFUL_RESEARCH
+
+    # Initialize session tool/domain blocklist
+    session_tool_domain_blocklist = state.get("session_tool_domain_blocklist", [])
+
     # Output recursion step information
     print(f"🔄 Supervisor: Recursion step {step_count}/{max_recursion_steps}")
 
@@ -131,7 +142,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
         # Verify quotas again
         if not needs_more_for_current_pair(progress, current_task, pending_increment=0):
             print(
-                f"   📊 Supervisor: Quota satisfied for cached mode. Setting exhausted flag."
+                "   📊 Supervisor: Quota satisfied for cached mode. Setting exhausted flag."
             )
             next_agent = "end"
             steps_to_add = calculate_predictive_steps(next_agent)
@@ -167,7 +178,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
         )
         if not allowed:
             print(
-                f"   🚫 Supervisor: No allowed URLs remaining in cached mode. Setting exhausted flag."
+                "   🚫 Supervisor: No allowed URLs remaining in cached mode. Setting exhausted flag."
             )
             next_agent = "end"
             steps_to_add = calculate_predictive_steps(next_agent)
@@ -248,7 +259,13 @@ def supervisor_node(state: DataScoutState) -> Dict:
         next_agent = "end"
         steps_to_add = calculate_predictive_steps(next_agent)
         next_step_count = step_count + steps_to_add
-        return {"next_agent": next_agent, "progress": progress, "strategy_block": "", "step_count": next_step_count}
+        return {
+            "next_agent": next_agent,
+            "progress": progress,
+            "strategy_block": "",
+            "step_count": next_step_count,
+            "session_tool_domain_blocklist": session_tool_domain_blocklist,
+        }
 
     # We have a task. Now, we determine the strategy block for it.
     characteristic = next_task.get("characteristic", "Verifiability")
@@ -495,6 +512,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                     "synthetic_budget": state.get("synthetic_budget", 0.2),
                     "fitness_report": None,
                     "step_count": next_step_count,  # Increment step count for next iteration
+                    "session_tool_domain_blocklist": session_tool_domain_blocklist,  # Pass through blocklist
                 }
 
         # Default: no cached reuse
@@ -574,6 +592,7 @@ def supervisor_node(state: DataScoutState) -> Dict:
                     "current_sample_provenance", "unknown"
                 ),  # Pass through provenance
                 "step_count": next_step_count,  # Increment step count for next iteration
+                "session_tool_domain_blocklist": [],  # Reset blocklist after successful archive
             }
         else:
             print(
@@ -838,14 +857,19 @@ def supervisor_node(state: DataScoutState) -> Dict:
             "step_count": next_step_count,  # Increment step count for next iteration
         }
 
-    base_prompt = """You are the supervisor of a team of Data Prospecting agents. Your role is to analyze the current mission status and decide which agent should act next.
+    research_detail = (
+        "\n- `research`: Finds source documents from the web."
+        if not research_is_off_limits
+        else ""
+    )
 
-Available Agents:
-- `research`: Finds source documents from the web.
-- `fitness`: Evaluates the quality of a source document.
-- `archive`: Saves an approved document.
-- `synthetic`: Generates a document from scratch.
-- `end`: Finishes the mission."""
+    base_prompt = f"""You are the supervisor of a team of Data Prospecting agents. Your role is to analyze the current mission status and decide which agent should act next.
+    
+    Available Agents:
+    - `fitness`: Evaluates the quality of a source document.
+    - `archive`: Saves an approved document.
+    - `synthetic`: Generates a document from scratch.
+    - `end`: Finishes the mission.{research_detail}"""
 
     characteristic = next_task.get("characteristic", "N/A")
     topic = next_task.get("topic", "N/A")
@@ -881,8 +905,13 @@ Available Agents:
     )
     mission_status = f"{total_samples_generated}/{total_samples_target} samples ({progress_pct:.0f}%) | {current_synthetic_pct:.0%} synthetic | {research_success_rate} research success"
 
-    strategic_guidance = f"""
-**4. Strategic Reasoning Guidance:**
+    research_detail = (
+        "\n**CRITICAL ALERT:** There are not enough steps remaining to complete a full research cycle. You **MUST NOT** route to `research`. Your only productive options are `synthetic` (if the budget allows) or `end`.\n"
+        if research_is_off_limits
+        else ""
+    )
+
+    strategic_guidance = f"""\n**4. Strategic Reasoning Guidance:**
 Your primary goal is generating high-quality samples efficiently. Consider both task requirements and resource management:
 
 **Mission Progress:**
@@ -894,7 +923,7 @@ Your primary goal is generating high-quality samples efficiently. Consider both 
 - **Synthetic budget**: {remaining_synthetic_budget}/{max_synthetic_samples} remaining (target: {synthetic_budget:.0%}, current: {current_synthetic_pct:.0%})
 - **Research success**: {research_success_rate} (based on recent attempts)
 - **Remaining work**: {remaining_total_work} samples needed
-
+{research_detail}
 **Decision Framework:**
 1. **Primary consideration**: Which approach is most likely to succeed for this specific characteristic/topic?
 2. **Secondary consideration**: Balance toward the synthetic target while ensuring quality
@@ -979,6 +1008,14 @@ Your response MUST be a JSON object matching the required schema, with a single 
         decision = SupervisorDecision.model_validate(repaired_data)
         next_agent = decision.next_agent.lower()
 
+        # Override research choice if it's off-limits due to insufficient steps
+        if research_is_off_limits and next_agent == "research":
+            print(
+                "   ⚠️ Supervisor: LLM chose 'research' despite limit. Overriding to 'end'."
+            )
+            # You could also add logic here to try 'synthetic' if it's cheaper and budget allows.
+            next_agent = "end"
+
         # --- NEW: Handle task switching ---
         if decision.new_task:
             print(f"✅ Supervisor: Switching to new task: {decision.new_task}")
@@ -1006,6 +1043,9 @@ Your response MUST be a JSON object matching the required schema, with a single 
 
             # Clear messages for the researcher
             messages = []
+
+            # Reset the session tool/domain blocklist for the new task
+            session_tool_domain_blocklist = []
     except Exception as parse_error:
         print(f"⚠️ Supervisor: JSON parsing failed: {parse_error}")
         print(f"   Raw content: '{raw_result.content}'")
@@ -1031,6 +1071,7 @@ Your response MUST be a JSON object matching the required schema, with a single 
         # Clear any fitness report when falling through to standard logic
         "fitness_report": None,
         "step_count": next_step_count,  # Increment step count for next iteration
+        "session_tool_domain_blocklist": session_tool_domain_blocklist,  # Pass through blocklist
     }
 
 
@@ -1049,6 +1090,15 @@ def research_node(state: "DataScoutState") -> Dict:
     print("🔍 RESEARCH NODE (Verifiable Research Workflow)")
     print(f"   Incoming messages: {len(state.get('messages', []))}")
     print(f"   LLM model: {getattr(llm, 'model', 'unknown')}")
+
+    # --- Read session tool/domain blocklist ---
+    session_tool_domain_blocklist = state.get("session_tool_domain_blocklist", [])
+    if session_tool_domain_blocklist:
+        print(
+            f"   🚫 Session blocklist contains {len(session_tool_domain_blocklist)} entries:"
+        )
+        for tool_name, domain in session_tool_domain_blocklist:
+            print(f"      - {tool_name} blocked for domain {domain}")
 
     # --- Extract the latest human question ---
     user_question = None
@@ -1070,6 +1120,8 @@ def research_node(state: "DataScoutState") -> Dict:
             "messages": [no_question_msg],
             # Return unchanged cache if any exists
             "research_session_cache": state.get("research_session_cache", []),
+            # Return unchanged blocklist
+            "session_tool_domain_blocklist": session_tool_domain_blocklist,
         }
 
     # --- Evidence cache (auditable log of work for Supervisor) ---
@@ -1458,7 +1510,25 @@ When you have successfully found and extracted a suitable source, you MUST outpu
                         print(
                             f"         ▶ Executing {tool_name} with args: {str(tool_args)[:200]} ..."
                         )
+
                         tool_result = matching_tool.invoke(tool_args)
+
+                        # Debug: Print tool result details
+                        if isinstance(tool_result, dict):
+                            status = tool_result.get('status')
+                            if status == 'error':
+                                error_detail = tool_result.get('error', '')
+                                print(f"         📊 Tool result status: {status} {error_detail}")
+                            else:
+                                print(f"         📊 Tool result status: {status}")
+                            results_data = tool_result.get("results")
+                            print(
+                                f"         📊 Tool result data: {type(results_data)} - {len(results_data) if results_data else 'None/Negative'} items"
+                            )
+                        else:
+                            print(
+                                f"         📊 Tool result: {type(tool_result)} - {str(tool_result)[:200]}"
+                            )
 
                         # Validate search tool results to ensure URLs are accessible
                         if tool_name in [
@@ -1466,35 +1536,100 @@ When you have successfully found and extracted a suitable source, you MUST outpu
                             "arxiv_search",
                             "wikipedia_search",
                         ] and isinstance(tool_result, dict):
-                            if tool_result.get("status") == "ok" and tool_result.get(
-                                "results"
-                            ):
-                                from .scout_utils import _validate_search_results
+                            if tool_name == "web_search":
+                                # Only proceed with validation if there are results left
+                                if tool_result.get(
+                                    "status"
+                                ) == "ok" and tool_result.get("results"):
+                                    from .scout_utils import _validate_search_results
 
-                                print(f"         🔍 Validating {tool_name} results...")
-                                validation_result = _validate_search_results(
-                                    tool_result["results"],
-                                    tool_name,
-                                    tool_args,
-                                    matching_tool,
-                                )
+                                    print(
+                                        f"         🔍 Validating {tool_name} results..."
+                                    )
+                                    validation_result = _validate_search_results(
+                                        tool_result["results"],
+                                        tool_name,
+                                        tool_args,
+                                        matching_tool,
+                                        session_tool_domain_blocklist,  # Pass the blocklist
+                                    )
 
-                                tool_result["results"] = validation_result["results"]
-                                tool_result["validation_info"] = validation_result
-                                print(
-                                    f"         ✅ {tool_name} results validated ({len(validation_result['results'])} results)"
-                                )
+                                    tool_result["results"] = validation_result[
+                                        "results"
+                                    ]
+                                    tool_result["validation_info"] = validation_result
+                                    print(
+                                        f"         ✅ {tool_name} results validated ({len(validation_result['results'])} results)"
+                                    )
 
-                                # Log retry information if performed
-                                if validation_result.get("retry_performed"):
-                                    if validation_result.get("retry_successful"):
+                                    # Log retry information if performed
+                                    if validation_result.get("retry_performed"):
+                                        if validation_result.get("retry_successful"):
+                                            print(
+                                                f"         🔄 {tool_name}: Auto-retry successful"
+                                            )
+                                        else:
+                                            print(
+                                                f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful"
+                                            )
+                                else:
+                                    # Handle error or genuinely empty results
+                                    if tool_result.get("status") == "error":
+                                        error_msg = tool_result.get(
+                                            "error", "Unknown error"
+                                        )
                                         print(
-                                            f"         🔄 {tool_name}: Auto-retry successful"
+                                            f"         ❌ {tool_name} tool failed: {error_msg}"
                                         )
                                     else:
                                         print(
-                                            f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful"
+                                            f"         ⚠️  No results returned by {tool_name} tool"
                                         )
+
+                                    # Create a validation result indicating no results to maintain structure
+                                    tool_result["validation_info"] = {
+                                        "results": [],
+                                        "validation_performed": True,
+                                        "needs_retry": False,
+                                        "filtered_count": 0,
+                                        "retry_performed": False,
+                                    }
+                            else:
+                                # For non-web_search tools, proceed with normal validation
+                                if tool_result.get(
+                                    "status"
+                                ) == "ok" and tool_result.get("results"):
+                                    from .scout_utils import _validate_search_results
+
+                                    print(
+                                        f"         🔍 Validating {tool_name} results..."
+                                    )
+                                    validation_result = _validate_search_results(
+                                        tool_result["results"],
+                                        tool_name,
+                                        tool_args,
+                                        matching_tool,
+                                        session_tool_domain_blocklist,  # Pass the blocklist
+                                    )
+
+                                    tool_result["results"] = validation_result[
+                                        "results"
+                                    ]
+                                    tool_result["validation_info"] = validation_result
+                                    print(
+                                        f"         ✅ {tool_name} results validated ({len(validation_result['results'])} results)"
+                                    )
+
+                                    # Log retry information if performed
+                                    if validation_result.get("retry_performed"):
+                                        if validation_result.get("retry_successful"):
+                                            print(
+                                                f"         🔄 {tool_name}: Auto-retry successful"
+                                            )
+                                        else:
+                                            print(
+                                                f"         🔄 {tool_name}: Auto-retry attempted but unsuccessful"
+                                            )
 
                         # Truncate the tool result based on the research role's max_tokens setting
                         if isinstance(tool_result, dict):
@@ -1535,6 +1670,41 @@ When you have successfully found and extracted a suitable source, you MUST outpu
                                 else f"error_{iteration}_{idx}",
                             )
                         )
+
+                        # === UPDATE BLOCKLIST FOR TOOL/DOMAIN FAILURES ===
+                        # Extract domain from URL args and add to blocklist
+                        if tool_name and tool_args and isinstance(tool_args, dict):
+                            url = (
+                                tool_args.get("url")
+                                or tool_args.get("base_url")
+                                or tool_args.get("start_url")
+                            )
+                            if url:
+                                try:
+                                    from urllib.parse import urlparse
+
+                                    domain = urlparse(url).netloc
+                                    if domain:
+                                        # Check if this combination is already blocked
+                                        block_entry = (tool_name, domain)
+                                        if (
+                                            block_entry
+                                            not in session_tool_domain_blocklist
+                                        ):
+                                            session_tool_domain_blocklist.append(
+                                                block_entry
+                                            )
+                                            print(
+                                                f"         🚫 Added to blocklist: {tool_name} for domain {domain}"
+                                            )
+                                        else:
+                                            print(
+                                                f"         ℹ️  Already blocked: {tool_name} for domain {domain}"
+                                            )
+                                except Exception as parse_error:
+                                    print(
+                                        f"         ⚠️  Could not parse domain from URL {url}: {parse_error}"
+                                    )
                 # Let the loop continue so the model can reason over observations
                 continue
 
@@ -1554,9 +1724,7 @@ When you have successfully found and extracted a suitable source, you MUST outpu
         # [EXISTING CODE] print("   ⚠️ No final report produced; generating a minimal report to satisfy contract.")
 
         # Research failure analysis - useful for diagnosing issues
-        print(
-            "   ⚠️ Research failed to produce final report after all iterations"
-        )
+        print("   ⚠️ Research failed to produce final report after all iterations")
         print("   Last 3 messages:")
         for msg in react_messages[-3:]:
             print(
@@ -1598,6 +1766,7 @@ When you have successfully found and extracted a suitable source, you MUST outpu
     return {
         "messages": [final_report_msg],  # Append the final Data Prospecting Report ONLY
         "research_session_cache": session_cache,  # Full, updated evidence cache (no clearing)
+        "session_tool_domain_blocklist": session_tool_domain_blocklist,  # Updated blocklist
     }
 
 
@@ -1747,7 +1916,6 @@ def fitness_node(state: "DataScoutState") -> Dict:
     config = load_claimify_config()
     llm = create_llm(config, "fitness")
 
-
     # --- START: PROVENANCE-AWARE LOGIC (Part 3) ---
     # 1. Retrieve the provenance flag from the state
     provenance = state.get("current_sample_provenance", "unknown")
@@ -1856,7 +2024,6 @@ Evaluate the retrieved content against the mission. Is this document a goldmine 
     log_message_content = (
         f"**Inspection Report**\n- **Status:** {status}\n- **Reason:** {report.reason}"
     )
-
 
     return {
         "messages": [AIMessage(content=log_message_content)],
@@ -1971,24 +2138,18 @@ def get_node_config(node_name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]
 
 def calculate_predictive_steps(next_agent: str) -> int:
     """Calculate the number of steps that will be taken in the upcoming path.
-    
+
     Based on the graph structure:
     - research path takes 3 steps (supervisor -> research -> research_tools -> supervisor)
     - fitness path takes 2 steps (supervisor -> fitness -> supervisor)
     - archive path takes 3 steps (supervisor -> archive -> archive_tools -> supervisor)
     - synthetic path takes 4 steps (supervisor -> synthetic -> archive -> archive_tools -> supervisor)
     - end path takes 0 steps
-    
+
     Returns:
         int: Number of steps to add to the step count
     """
-    steps_map = {
-        "research": 3,
-        "fitness": 2,
-        "archive": 3,
-        "synthetic": 4,
-        "end": 0
-    }
+    steps_map = {"research": 3, "fitness": 2, "archive": 3, "synthetic": 4, "end": 0}
     return steps_map.get(next_agent, 0)
 
 

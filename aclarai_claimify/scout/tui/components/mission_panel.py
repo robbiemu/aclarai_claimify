@@ -29,7 +29,10 @@ class MissionPanel(Static):
             mission_plan = self.config.get("mission_plan", {})
             nodes = mission_plan.get("nodes", [])
             model = nodes[0].get("model", "unknown") if nodes else "unknown"
-            provider = self.config.get("search_provider", "unknown")
+            provider = (
+                (self.config.get("web_search") or {}).get("provider")
+                or self.config.get("search_provider", "unknown")
+            )
             
             mission_info = (
                 f"Mission: {self.mission_name}\n"
@@ -49,7 +52,10 @@ class MissionPanel(Static):
             mission_plan = self.config.get("mission_plan", {})
             nodes = mission_plan.get("nodes", [])
             model = nodes[0].get("model", "unknown") if nodes else "unknown"
-            provider = self.config.get("search_provider", "unknown")
+            provider = (
+                (self.config.get("web_search") or {}).get("provider")
+                or self.config.get("search_provider", "unknown")
+            )
             
             mission_info = (
                 f"Mission: {self.mission_name}\n"

@@ -22,6 +22,17 @@ from langchain_core.tools import tool
 
 from .litesearch import AsyncRateLimitManager, SearchProviderProxy
 from .config import load_scout_config
+# Avoid circular import with scout_utils by defining a minimal local helper
+def _find_url_field(results: List[Dict[str, Any]]) -> Optional[str]:
+    if not results:
+        return None
+    first = results[0]
+    if not isinstance(first, dict):
+        return None
+    for key in ("url", "link"):
+        if key in first:
+            return key
+    return None
 
 
 # Optional import for deep crawling
@@ -103,7 +114,26 @@ def create_web_search_tool():
     This ensures that the search provider is determined by the configuration, not by the agent.
     """
     config = load_scout_config()
-    search_provider = config.get("search_provider", "duckduckgo/search")
+    ws_cfg = (config.get("web_search") or {}) if isinstance(config, dict) else {}
+    # Backward compat: fall back to root search_provider if present
+    search_provider = ws_cfg.get(
+        "provider",
+        config.get("search_provider", "duckduckgo/search"),
+    )
+    ws_rps = ws_cfg.get("requests_per_second") or ws_cfg.get("rps")
+    # Canonical config key: max_results (backward-compat: accept older names if present)
+    ws_max_results = (
+        ws_cfg.get("max_results")
+        if isinstance(ws_cfg, dict)
+        else None
+    )
+    if ws_max_results is None and isinstance(ws_cfg, dict):
+        # Backward compatibility for older configs
+        for legacy_key in ("num_results", "count", "limit"):
+            if legacy_key in ws_cfg:
+                ws_max_results = ws_cfg.get(legacy_key)
+                break
+    respect_robots = ws_cfg.get("respect_robots", config.get("use_robots", True))
 
     @tool("web_search", args_schema=WebSearchInput)
     def web_search(query: str) -> Dict[str, Any]:
@@ -121,42 +151,63 @@ def create_web_search_tool():
         )
         try:
             # Run the async operation safely with improved event loop management
-            results = _run_async_safely(proxy.run(query))
+            # Pass configured RPS to the proxy (if provided)
+            run_kwargs = {}
+            if ws_rps is not None:
+                run_kwargs["requests_per_second"] = ws_rps
+            # Pass canonical max_results; proxy maps to provider-specific params
+            if ws_max_results is not None:
+                run_kwargs["max_results"] = ws_max_results
+            results = _run_async_safely(proxy.run(query, **run_kwargs))
+
+            # Normalize results to a list form for downstream processing
+            # Some providers (e.g., DuckDuckGo) return a single string
+            if isinstance(results, str):
+                normalized_results = [results]
+            elif isinstance(results, list):
+                normalized_results = results
+            else:
+                # Keep as-is but wrap in a list to maintain consistency
+                normalized_results = [results]
 
             # Post-processing: check robots.txt if enabled
-            if config.get("use_robots", True) and results:
-                filtered_results = []
-                for result in results:
-                    url = result.get("url")
-                    if not url:
-                        continue
-
-                    try:
-                        parsed_url = urlparse(url)
-                        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                        robots_url = urljoin(base_url, "/robots.txt")
-
-                        rp = RobotFileParser()
-                        rp.set_url(robots_url)
-                        rp.read()
-
-                        if rp.can_fetch("DataScout/1.0", url):
+            if respect_robots and normalized_results:
+                # Only attempt robots checks for structured results with URLs
+                if isinstance(normalized_results[0], dict):
+                    filtered_results = []
+                    key = _find_url_field(normalized_results)
+                    for result in normalized_results:
+                        url = result.get(key) if isinstance(result, dict) else None
+                        if not url:
                             filtered_results.append(result)
-                        else:
+                            continue
+
+                        try:
+                            parsed_url = urlparse(url)
+                            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                            robots_url = urljoin(base_url, "/robots.txt")
+
+                            rp = RobotFileParser()
+                            rp.set_url(robots_url)
+                            rp.read()
+
+                            if rp.can_fetch("DataScout/1.0", url):
+                                filtered_results.append(result)
+                            else:
+                                print(
+                                    f"      ⚠️ Filtering out {url} due to robots.txt"
+                                )
+                        except Exception as e:
+                            # If we can't check robots.txt, assume it's okay to proceed
                             print(
-                                f"      ⚠️ Filtering out {url} due to robots.txt"
+                                f"      ⚠️ Could not check robots.txt for {url}: {e}, keeping result"
                             )
-                    except Exception as e:
-                        # If we can't check robots.txt, assume it's okay to proceed
-                        print(
-                            f"      ⚠️ Could not check robots.txt for {url}: {e}, keeping result"
-                        )
-                        filtered_results.append(result)
-                results = filtered_results
+                            filtered_results.append(result)
+                    normalized_results = filtered_results
 
             return {
                 "query": query,
-                "results": results,
+                "results": normalized_results,
                 "provider": search_provider,
                 "status": "ok",
             }
@@ -233,12 +284,43 @@ def arxiv_get_content(query: str) -> Dict[str, Any]:
         # Using LangChain's ArxivAPIWrapper for detailed content retrieval
         from langchain_community.utilities import ArxivAPIWrapper
 
+        # Derive limits from scout_config for the research role
+        cfg = load_scout_config()
+        role_max_tokens = None
+        # Prefer mission_plan.nodes entries if present
+        try:
+            for node in (cfg.get("mission_plan", {}) or {}).get("nodes", []) or []:
+                if isinstance(node, dict) and node.get("name") == "research":
+                    role_max_tokens = node.get("max_tokens")
+                    summary_char_limit = node.get("summary_char_limit")
+                    break
+        except Exception:
+            role_max_tokens = None
+            summary_char_limit = None
+        if role_max_tokens is None:
+            role_max_tokens = (
+                ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
+                    "max_tokens"
+                )
+            )
+            if summary_char_limit is None:
+                summary_char_limit = (
+                    ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
+                        "summary_char_limit"
+                    )
+                )
+        if role_max_tokens is None:
+            role_max_tokens = 2000
+        # Compute default char budget per source assuming ~5 sources and reserving overhead
+        default_summary_chars = max(2000, int((int(role_max_tokens) * 4) * 0.8 / 5))
+        max_chars = int(summary_char_limit) if summary_char_limit else default_summary_chars
+
         arxiv_wrapper = ArxivAPIWrapper(
             top_k_results=5,
             ARXIV_MAX_QUERY_LENGTH=300,
             load_max_docs=5,
             load_all_available_meta=False,
-            doc_content_chars_max=8000,
+            doc_content_chars_max=max_chars,
         )
 
         # Get detailed documents
@@ -253,7 +335,9 @@ def arxiv_get_content(query: str) -> Dict[str, Any]:
                     "authors": doc.metadata.get("Authors", "N/A"),
                     "published": doc.metadata.get("Published", "N/A"),
                     "summary": doc.metadata.get("Summary", "N/A"),
-                    "content": doc.page_content[:8000] if doc.page_content else "N/A",
+                    "content": doc.page_content[:max_chars]
+                    if doc.page_content
+                    else "N/A",
                 }
             )
 
@@ -334,11 +418,40 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
         # Using LangChain's WikipediaAPIWrapper for detailed content retrieval
         from langchain_community.utilities import WikipediaAPIWrapper
 
+        # Derive limits from scout_config for the research role
+        cfg = load_scout_config()
+        role_max_tokens = None
+        try:
+            for node in (cfg.get("mission_plan", {}) or {}).get("nodes", []) or []:
+                if isinstance(node, dict) and node.get("name") == "research":
+                    role_max_tokens = node.get("max_tokens")
+                    summary_char_limit = node.get("summary_char_limit")
+                    break
+        except Exception:
+            role_max_tokens = None
+            summary_char_limit = None
+        if role_max_tokens is None:
+            role_max_tokens = (
+                ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
+                    "max_tokens"
+                )
+            )
+            if summary_char_limit is None:
+                summary_char_limit = (
+                    ((cfg.get("nodes", {}) or {}).get("research", {}) or {}).get(
+                        "summary_char_limit"
+                    )
+                )
+        if role_max_tokens is None:
+            role_max_tokens = 2000
+        default_summary_chars = max(2000, int((int(role_max_tokens) * 4) * 0.8 / 5))
+        max_chars = int(summary_char_limit) if summary_char_limit else default_summary_chars
+
         wikipedia_wrapper = WikipediaAPIWrapper(
             top_k_results=3,
             lang="en",
             load_all_available_meta=False,
-            doc_content_chars_max=8000,
+            doc_content_chars_max=max_chars,
         )
 
         # Get detailed documents
@@ -351,7 +464,9 @@ def wikipedia_get_content(query: str) -> Dict[str, Any]:
                 {
                     "title": doc.metadata.get("title", "N/A"),
                     "summary": doc.metadata.get("summary", "N/A"),
-                    "content": doc.page_content[:8000] if doc.page_content else "N/A",
+                    "content": doc.page_content[:max_chars]
+                    if doc.page_content
+                    else "N/A",
                 }
             )
 
@@ -390,14 +505,22 @@ def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str
     # Load the configuration to get max_tokens for the role
     config = load_scout_config()
 
-    # Get max_tokens for the role
+    # Resolve max_tokens from mission_plan.nodes first, fall back to nodes[role]
     max_tokens = None
-    if config.get("nodes") and config.get("nodes").get(role):
-        max_tokens = config.get("nodes").get(role).get("max_tokens")
-
-    # If we couldn't determine max_tokens, use a reasonable default
+    try:
+        for node in (config.get("mission_plan", {}) or {}).get("nodes", []) or []:
+            if isinstance(node, dict) and node.get("name") == role:
+                max_tokens = node.get("max_tokens")
+                break
+    except Exception:
+        max_tokens = None
     if max_tokens is None:
-        max_tokens = 1000
+        max_tokens = (((config.get("nodes", {}) or {}).get(role, {}) or {}).get(
+            "max_tokens"
+        ))
+    # If still undefined, use a reasonable default
+    if max_tokens is None:
+        max_tokens = 2000
 
     # Fields that might contain large text content
     text_fields = ["results", "markdown", "content", "text", "output"]
@@ -406,7 +529,7 @@ def _truncate_response_for_role(response: Dict[str, Any], role: str) -> Dict[str
     for field in text_fields:
         if field in response and isinstance(response[field], str):
             # Rough approximation: assume 1 token ≈ 4 characters
-            max_chars = max_tokens * 4
+            max_chars = int(max_tokens) * 4
 
             # If the field content is longer than our limit, truncate it
             if len(response[field]) > max_chars:
@@ -465,9 +588,6 @@ def _safe_request_get(
                     )
                     raise
             elif 400 <= e.response.status_code < 500:
-                print(
-                    f"      ❌ Client error {e.response.status_code} for {url}, not retrying"
-                )
                 raise
             elif e.response.status_code >= 500:
                 if attempt < max_retries:
@@ -631,13 +751,17 @@ def url_to_markdown(
             "status": "ok",
         }
     except Exception as e:
+        error_message = f"{type(e).__name__}: {str(e)}"
+        if isinstance(e, httpx.HTTPStatusError):
+            if 400 <= e.response.status_code < 500:
+                error_message = f"{e.response.status_code} - for {url}, not retrying"
         return {
             "url": url,
             "markdown": "",
             "title": "",
             "text_snippet": "",
             "status": "error",
-            "error": f"{type(e).__name__}: {str(e)}",
+            "error": error_message,
         }
 
 
