@@ -79,6 +79,8 @@ class DataScoutTUI(App):
         # System theme detection
         self.system_theme_sync_enabled = DARKDETECT_AVAILABLE
         self.last_detected_theme = None
+        # When True, a user manually toggled theme; don't auto-revert
+        self.user_theme_override = False
         self.show_tree = False
 
     def debug_log(self, message: str):
@@ -116,6 +118,10 @@ class DataScoutTUI(App):
 
         # Only change if system theme is different from what we detected last time
         if current_system_theme != self.last_detected_theme:
+            # If the user manually toggled, clear the override only when the
+            # system theme actually changes. This avoids immediate auto-revert.
+            if self.user_theme_override:
+                self.user_theme_override = False
             self.last_detected_theme = current_system_theme
 
             # Convert system theme to our dark boolean
@@ -551,16 +557,22 @@ class DataScoutTUI(App):
         self.dark = not self.dark
         theme_name = "dark" if self.dark else "light"
 
-        # Update our last detected system theme to prevent immediate auto-sync back
+        # Mark a manual override and align last_detected_theme to current
+        # system theme so periodic checks don't immediately revert it.
         if self.system_theme_sync_enabled:
-            self.last_detected_theme = theme_name
+            self.user_theme_override = True
+            current_system = self.detect_system_theme()
+            if current_system is not None:
+                self.last_detected_theme = current_system
 
         # Apply all theme styling programmatically
         self.apply_theme_styling()
 
         # Show user feedback
         if hasattr(self, "conversation"):
-            sync_status = " (manual override)" if self.system_theme_sync_enabled else ""
+            sync_status = (
+                " (manual override)" if self.system_theme_sync_enabled else ""
+            )
             self.conversation.add_message(
                 "info", f"🎨 Switched to {theme_name} theme{sync_status}"
             )
