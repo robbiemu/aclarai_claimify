@@ -117,9 +117,6 @@ def supervisor_node(state: DataScoutState) -> Dict:
     
     # Output recursion step information
     print(f"🔄 Supervisor: Recursion step {step_count}/{max_recursion_steps}")
-    
-    # Update step count for next iteration (to be included in return statements)
-    next_step_count = step_count + 1
 
     # --- CACHED-ONLY MODE CHECK ---
     # If we're in cached-only mode, deterministically route to research without LLM consultation
@@ -136,8 +133,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
             print(
                 f"   📊 Supervisor: Quota satisfied for cached mode. Setting exhausted flag."
             )
+            next_agent = "end"
+            steps_to_add = calculate_predictive_steps(next_agent)
+            next_step_count = step_count + steps_to_add
             return {
-                "next_agent": "end",
+                "next_agent": next_agent,
                 "progress": progress,
                 "current_task": current_task,
                 "strategy_block": state.get("strategy_block", ""),
@@ -169,8 +169,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
             print(
                 f"   🚫 Supervisor: No allowed URLs remaining in cached mode. Setting exhausted flag."
             )
+            next_agent = "end"
+            steps_to_add = calculate_predictive_steps(next_agent)
+            next_step_count = step_count + steps_to_add
             return {
-                "next_agent": "end",
+                "next_agent": next_agent,
                 "progress": progress,
                 "current_task": current_task,
                 "strategy_block": state.get("strategy_block", ""),
@@ -198,8 +201,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
         print(
             f"   🎯 Supervisor: Routing to research in cached-only mode with {len(allowed)} allowed URLs."
         )
+        next_agent = "research"
+        steps_to_add = calculate_predictive_steps(next_agent)
+        next_step_count = step_count + steps_to_add
         return {
-            "next_agent": "research",
+            "next_agent": next_agent,
             "progress": progress,
             "current_task": current_task,
             "strategy_block": state.get("strategy_block", ""),
@@ -239,7 +245,10 @@ def supervisor_node(state: DataScoutState) -> Dict:
     if not next_task:
         # All tasks are complete.
         print("🎉 Supervisor: All tasks in the mission are complete!")
-        return {"next_agent": "end", "progress": progress, "strategy_block": "", "step_count": next_step_count}
+        next_agent = "end"
+        steps_to_add = calculate_predictive_steps(next_agent)
+        next_step_count = step_count + steps_to_add
+        return {"next_agent": next_agent, "progress": progress, "strategy_block": "", "step_count": next_step_count}
 
     # We have a task. Now, we determine the strategy block for it.
     characteristic = next_task.get("characteristic", "Verifiability")
@@ -301,8 +310,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
             print(
                 f"   ⚠️  Supervisor: Sample provenance '{provenance}' != 'researched'. Skipping cached reuse."
             )
+            next_agent = "end"
+            steps_to_add = calculate_predictive_steps(next_agent)
+            next_step_count = step_count + steps_to_add
             return {
-                "next_agent": "end",
+                "next_agent": next_agent,
                 "progress": state.get("progress", {}),
                 "current_task": state.get("current_task"),
                 "strategy_block": state.get("strategy_block", ""),
@@ -332,8 +344,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
             print(
                 f"   📊 Supervisor: Quota satisfied for {next_task.get('characteristic', 'N/A')}/{next_task.get('topic', 'N/A')}. Ending cycle."
             )
+            next_agent = "end"
+            steps_to_add = calculate_predictive_steps(next_agent)
+            next_step_count = step_count + steps_to_add
             return {
-                "next_agent": "end",
+                "next_agent": next_agent,
                 "progress": state.get("progress", {}),
                 "current_task": state.get("current_task"),
                 "strategy_block": state.get("strategy_block", ""),
@@ -370,8 +385,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
 
         if not available_candidates:
             print("   📭 Supervisor: No unused cached sources available. Ending cycle.")
+            next_agent = "end"
+            steps_to_add = calculate_predictive_steps(next_agent)
+            next_step_count = step_count + steps_to_add
             return {
-                "next_agent": "end",
+                "next_agent": next_agent,
                 "progress": state.get("progress", {}),
                 "current_task": state.get("current_task"),
                 "strategy_block": state.get("strategy_block", ""),
@@ -452,9 +470,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 print(
                     f"   ✅ Supervisor: Scheduling cached reuse with {len(final_selected)} sources for next cycle"
                 )
-
+                next_agent = "end"
+                steps_to_add = calculate_predictive_steps(next_agent)
+                next_step_count = step_count + steps_to_add
                 return {
-                    "next_agent": "end",
+                    "next_agent": next_agent,
                     "progress": state.get("progress", {}),
                     "current_task": state.get("current_task"),
                     "strategy_block": state.get("strategy_block", ""),
@@ -479,8 +499,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
 
         # Default: no cached reuse
         print("   📋 Supervisor: No cached reuse planned. Ending cycle normally.")
+        next_agent = "end"
+        steps_to_add = calculate_predictive_steps(next_agent)
+        next_step_count = step_count + steps_to_add
         return {
-            "next_agent": "end",
+            "next_agent": next_agent,
             "progress": state.get("progress", {}),
             "current_task": state.get("current_task"),
             "strategy_block": state.get("strategy_block", ""),
@@ -528,8 +551,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
             state_dict = dict(state)
             state_dict["fitness_report"] = None
 
+            next_agent = "archive"
+            steps_to_add = calculate_predictive_steps(next_agent)
+            next_step_count = step_count + steps_to_add
             return {
-                "next_agent": "archive",
+                "next_agent": next_agent,
                 "progress": progress,
                 "current_task": next_task,
                 "strategy_block": strategy_block,
@@ -617,8 +643,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
         print(
             "📋 Supervisor: Research signaled 'No More Cached Data'. Setting exhausted flag and ending cycle."
         )
+        next_agent = "end"
+        steps_to_add = calculate_predictive_steps(next_agent)
+        next_step_count = step_count + steps_to_add
         return {
-            "next_agent": "end",
+            "next_agent": next_agent,
             "progress": progress,
             "current_task": next_task,
             "strategy_block": strategy_block,
@@ -675,8 +704,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
                         f"⚠️  Supervisor: URL '{report_url}' not in allowed whitelist. Treating as violation."
                     )
                     print(f"   Allowed URLs: {list(allowed)}")
+                    next_agent = "end"
+                    steps_to_add = calculate_predictive_steps(next_agent)
+                    next_step_count = step_count + steps_to_add
                     return {
-                        "next_agent": "end",
+                        "next_agent": next_agent,
                         "progress": progress,
                         "current_task": next_task,
                         "strategy_block": strategy_block,
@@ -781,9 +813,11 @@ def supervisor_node(state: DataScoutState) -> Dict:
                 "ℹ️ Supervisor: No source URL or research cache found, defaulting provenance to 'synthetic'."
             )
 
-
+        next_agent = "fitness"
+        steps_to_add = calculate_predictive_steps(next_agent)
+        next_step_count = step_count + steps_to_add
         return {
-            "next_agent": "fitness",
+            "next_agent": next_agent,
             "decision_history": decision_history + ["fitness"],
             "consecutive_failures": 0,
             "last_action_status": "success",
@@ -977,6 +1011,9 @@ Your response MUST be a JSON object matching the required schema, with a single 
         print(f"   Raw content: '{raw_result.content}'")
         next_agent = "research"
 
+    # Calculate predictive steps for the LLM decision case
+    steps_to_add = calculate_predictive_steps(next_agent)
+    next_step_count = step_count + steps_to_add
     return {
         "next_agent": next_agent,
         "progress": progress,
@@ -1930,6 +1967,29 @@ def get_node_config(node_name: str) -> Optional[ScoutAgentMissionPlanNodeConfig]
     if config.scout_agent and config.scout_agent.mission_plan:
         return config.scout_agent.mission_plan.get_node_config(node_name)
     return None
+
+
+def calculate_predictive_steps(next_agent: str) -> int:
+    """Calculate the number of steps that will be taken in the upcoming path.
+    
+    Based on the graph structure:
+    - research path takes 3 steps (supervisor -> research -> research_tools -> supervisor)
+    - fitness path takes 2 steps (supervisor -> fitness -> supervisor)
+    - archive path takes 3 steps (supervisor -> archive -> archive_tools -> supervisor)
+    - synthetic path takes 4 steps (supervisor -> synthetic -> archive -> archive_tools -> supervisor)
+    - end path takes 0 steps
+    
+    Returns:
+        int: Number of steps to add to the step count
+    """
+    steps_map = {
+        "research": 3,
+        "fitness": 2,
+        "archive": 3,
+        "synthetic": 4,
+        "end": 0
+    }
+    return steps_map.get(next_agent, 0)
 
 
 # === Supervisor Helper Functions for Cached Reuse ===
