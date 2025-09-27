@@ -179,22 +179,25 @@ class TestGenerateDataset:
         """Test dataset generation with nonexistent input file."""
         with pytest.raises(FileNotFoundError):
             generate_dataset(
-                input_file=Path("/nonexistent/file.txt"),
+                input_path=Path("/nonexistent/file.txt"),
                 output_file=Path("/tmp/output.jsonl"),
                 component="selection",
                 teacher_model="gpt-4o",
                 claimify_config=self.mock_config,
             )
 
-    def test_generate_dataset_empty_input(self):
+    @patch("aclarai_claimify.optimization.generate.call_teacher_model")
+    def test_generate_dataset_empty_input(self, mock_call: MagicMock):
         """Test dataset generation with empty input file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             f.write("")  # Empty file
             input_file = Path(f.name)
 
-        with pytest.raises(GenerationError, match="Input file is empty"):
+        with pytest.raises(
+            GenerationError, match="No generation jobs were created from the provided input"
+        ):
             generate_dataset(
-                input_file=input_file,
+                input_path=input_file,
                 output_file=Path("/tmp/output.jsonl"),
                 component="selection",
                 teacher_model="gpt-4o",
@@ -203,6 +206,7 @@ class TestGenerateDataset:
 
         # Clean up
         input_file.unlink()
+        mock_call.assert_not_called()
 
     def test_generate_dataset_invalid_component(self):
         """Test dataset generation with invalid component."""
@@ -214,7 +218,7 @@ class TestGenerateDataset:
 
         with pytest.raises(GenerationError, match="Unknown component"):
             generate_dataset(
-                input_file=input_file,
+                input_path=input_file,
                 output_file=Path("/tmp/output.jsonl"),
                 component="invalid-component",
                 teacher_model="gpt-4o",
@@ -243,7 +247,7 @@ class TestGenerateDataset:
         try:
             # Run the generation
             generate_dataset(
-                input_file=input_file,
+                input_path=input_file,
                 output_file=output_file,
                 component="selection",
                 teacher_model="gpt-4o",
@@ -303,7 +307,7 @@ class TestGenerateDataset:
         try:
             # Run the generation
             generate_dataset(
-                input_file=input_file,
+                input_path=input_file,
                 output_file=output_file,
                 component="decomposition",
                 teacher_model="gpt-4o",
@@ -331,3 +335,44 @@ class TestGenerateDataset:
             input_file.unlink()
             if output_file.exists():
                 output_file.unlink()
+
+    @patch("aclarai_claimify.optimization.generate.call_teacher_model")
+    def test_generate_dataset_curated_handles_sparse_files(
+        self, mock_call, tmp_path
+    ):
+        """Ensure curated directories skip invalid JSON structures."""
+
+        mock_call.return_value = '{"selected": true, "confidence": 0.9, "reasoning": "ok"}'
+
+        curated_dir = tmp_path / "curated"
+        curated_dir.mkdir()
+
+        valid_payload = {
+            "positive_example": {
+                "target_sentence": "System uptime reached 99.9% in Q1.",
+                "context_text": "[0] System uptime reached 99.9% in Q1. [1] Maintenance windows remained unchanged.",
+            },
+            "negative_example": {
+                "target_sentence": "I think the rollout felt smooth overall.",
+                "context_text": "[0] Stakeholders attended the rollout meeting. [1] I think the rollout felt smooth overall. [2] Follow-up actions are pending.",
+            },
+        }
+        (curated_dir / "valid.json").write_text(json.dumps(valid_payload), encoding="utf-8")
+        (curated_dir / "empty.json").write_text(json.dumps(""), encoding="utf-8")
+
+        output_file = tmp_path / "out.jsonl"
+
+        generate_dataset(
+            input_path=curated_dir,
+            output_file=output_file,
+            component="selection",
+            teacher_model="gpt-4o",
+            claimify_config=self.mock_config,
+            curated_flag=True,
+        )
+
+        assert output_file.exists()
+        with output_file.open() as handle:
+            lines = handle.readlines()
+        assert len(lines) == 2
+        assert mock_call.call_count == 2

@@ -23,6 +23,8 @@ optimization = [
     "tqdm>=4.65.0",
     "sentence-transformers",
     "faiss-cpu",
+    "aiohttp>=3.12.15",
+    "json-repair>=0.44.1",
 ]
 
 [project.scripts]
@@ -42,3 +44,15 @@ packages = [
 [tool.setuptools.package-data]
 "aclarai_claimify.settings" = ["*.yaml"]
 "aclarai_claimify" = ["../docs/*.md"]
+
+[dependency-groups]
+optimization = [
+    "litellm>=1.76.1",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*SwigPyPacked.*:DeprecationWarning",
+    "ignore:.*SwigPyObject.*:DeprecationWarning",
+    "ignore:.*swigvarlink.*:DeprecationWarning",
+]

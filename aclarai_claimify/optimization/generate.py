@@ -4,7 +4,9 @@ This module provides functionality to generate high-quality training datasets
 by using powerful teacher models to produce structured outputs from raw text inputs.
 """
 
+import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -111,7 +113,9 @@ def exponential_backoff(
     return delay
 
 
-def call_teacher_model(prompt: str, model: str, model_params: Optional[Dict[str, Any]] = None) -> str:
+def call_teacher_model(
+    prompt: str, model: str, model_params: Optional[Dict[str, Any]] = None
+) -> str:
     """Call the teacher model with the given prompt.
 
     Args:
@@ -132,14 +136,12 @@ def call_teacher_model(prompt: str, model: str, model_params: Optional[Dict[str,
             completion_kwargs = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 500,
             }
-            
+
             # Add any additional model parameters
             if model_params:
                 completion_kwargs.update(model_params)
-            
+
             response = litellm.completion(**completion_kwargs)
             return response.choices[0].message.content.strip()
         except RateLimitError as e:
@@ -207,7 +209,10 @@ def parse_json_response(response: str) -> Dict[str, Any]:
 
 
 def generate_selection_example(
-    context: str, target: str, teacher_model: str, model_params: Optional[Dict[str, Any]] = None
+    context: str,
+    target: str,
+    teacher_model: str,
+    model_params: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Generate a single example for the selection component.
 
@@ -248,7 +253,10 @@ def generate_selection_example(
 
 
 def generate_disambiguation_example(
-    context: str, target: str, teacher_model: str, model_params: Optional[Dict[str, Any]] = None
+    context: str,
+    target: str,
+    teacher_model: str,
+    model_params: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Generate a single example for the disambiguation component.
 
@@ -289,7 +297,9 @@ def generate_disambiguation_example(
 
 
 def generate_decomposition_example(
-    disambiguated_text: str, teacher_model: str, model_params: Optional[Dict[str, Any]] = None
+    disambiguated_text: str,
+    teacher_model: str,
+    model_params: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Generate a single example for the decomposition component.
 
@@ -355,6 +365,7 @@ import importlib
 import numpy as np
 import faiss
 
+
 def _load_embedder(embedder_config):
     """Dynamically load the embedder plugin."""
     embedder_type = embedder_config.type
@@ -363,7 +374,9 @@ def _load_embedder(embedder_config):
         module = importlib.import_module(module_path)
 
         # Convention: class name is CamelCase version of module name (e.g., sentence_transformer -> SentenceTransformerEmbedder)
-        class_name = "".join(word.capitalize() for word in embedder_type.split("_")) + "Embedder"
+        class_name = (
+            "".join(word.capitalize() for word in embedder_type.split("_")) + "Embedder"
+        )
         embedder_class = getattr(module, class_name)
 
         return embedder_class(model_name=embedder_config.model)
@@ -371,34 +384,163 @@ def _load_embedder(embedder_config):
         raise GenerationError(f"Failed to load embedder '{embedder_type}': {e}")
 
 
+def clean_markdown(content: str) -> str:
+    """Removes common markdown syntax from a string."""
+    # Remove headings
+    content = re.sub(r"^#+\s+", "", content, flags=re.MULTILINE)
+    # Remove bold and italics
+    content = re.sub(r"(\*\*|\*|__|_)(.*?)\1", r"\2", content)
+    # Remove links
+    content = re.sub(r"\[(.*?)\]\((.*?))\)", r"\1", content)
+    # Remove lists
+    content = re.sub(r"^\s*[-*+]\s+", "", content, flags=re.MULTILINE)
+    # Remove newlines and extra spaces
+    content = content.replace("\n", " ").strip()
+    return content
+
+
+def _log_job_exception(metadata: Dict[str, Any], error: Exception) -> None:
+    """Log a job failure with context-aware messaging."""
+
+    file_path = metadata.get("file_path")
+    if metadata.get("curated"):
+        print(
+            f"Error processing prospect from file {file_path}: {error}",
+            file=sys.stderr,
+        )
+    else:
+        line_index = metadata.get("line_index")
+        if line_index is not None:
+            print(
+                f"Error processing line {line_index + 1} in file {file_path}: {error}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error processing file {file_path}: {error}", file=sys.stderr)
+
+    if hasattr(error, "__traceback__"):
+        traceback.print_exception(
+            type(error), error, error.__traceback__, file=sys.stderr
+        )
+
+
+async def _run_generation_jobs(
+    jobs: list[dict[str, Any]],
+    concurrency: int,
+    output_handle,
+) -> tuple[int, int]:
+    """Execute generation jobs concurrently while respecting the concurrency limit."""
+
+    semaphore = asyncio.Semaphore(concurrency)
+    progress_bar = tqdm.tqdm(total=len(jobs), desc="Generating examples")
+
+    successful = 0
+    failed = 0
+
+    async def run_job(job: dict[str, Any]):
+        async with semaphore:
+            try:
+                result = await asyncio.to_thread(job["func"], *job["args"])
+                return job, result, None
+            except Exception as exc:  # noqa: BLE001 - log and continue
+                return job, None, exc
+
+    tasks = [asyncio.create_task(run_job(job)) for job in jobs]
+
+    try:
+        for task in asyncio.as_completed(tasks):
+            job, result, error = await task
+            progress_bar.update(1)
+
+            if error is not None:
+                failed += 1
+                _log_job_exception(job["metadata"], error)
+                continue
+
+            if result is None:
+                failed += 1
+                continue
+
+            output_handle.write(json.dumps(result) + "\n")
+            successful += 1
+    finally:
+        progress_bar.close()
+
+    return successful, failed
+
+
+def _iter_curated_examples(data: Any, file_path: Path) -> list[dict[str, Any]]:
+    """Normalize curated data structures into example dictionaries."""
+
+    if isinstance(data, dict):
+        candidates = [value for value in data.values() if isinstance(value, dict)]
+    elif isinstance(data, list):
+        candidates = [item for item in data if isinstance(item, dict)]
+    else:
+        print(
+            f"Skipping curated file {file_path}: unsupported JSON structure ({type(data).__name__})",
+            file=sys.stderr,
+        )
+        return []
+
+    if not candidates:
+        print(
+            f"Skipping curated file {file_path}: no usable examples found",
+            file=sys.stderr,
+        )
+
+    return candidates
+
+
 def generate_dataset(
-    input_file: Path,
+    input_path: Path,
     output_file: Path,
     component: str,
     teacher_model: str,
     claimify_config: ClaimifyConfig,
     model_params: Optional[Dict[str, Any]] = None,
+    clean_markdown_flag: bool = False,
+    curated_flag: bool = False,
+    concurrency: int = 1,
 ) -> None:
     """Generate a gold standard dataset from raw text inputs.
 
     Args:
-        input_file: Path to input text file (one sentence per line)
+        input_path: Path to input text file (one sentence per line) or a directory of text files.
         output_file: Path to output JSONL file
         component: Component name (selection, disambiguation, decomposition)
         teacher_model: Teacher model name
         claimify_config: The main Claimify configuration object.
         model_params: Additional model parameters to pass to LiteLLM
+        clean_markdown_flag: Whether to clean markdown from input files.
+        curated_flag: Whether the input path is a directory of curated JSON files.
+        concurrency: Maximum number of concurrent generation tasks.
 
     Raises:
         GenerationError: If generation fails
-        FileNotFoundError: If input file doesn't exist
+        FileNotFoundError: If input path doesn't exist
     """
-    if not input_file.exists():
-        raise FileNotFoundError(f"Input file not found: {input_file}")
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input path not found: {input_path}")
+
+    if curated_flag:
+        files_to_process = sorted(input_path.glob("*.json"))
+    else:
+        files_to_process = []
+        if input_path.is_dir():
+            files_to_process.extend(sorted(input_path.glob("*.md")))
+            files_to_process.extend(sorted(input_path.glob("*.txt")))
+        else:
+            files_to_process.append(input_path)
+
+    if not files_to_process:
+        raise GenerationError(f"No files found at: {input_path}")
+
+    if concurrency <= 0:
+        raise GenerationError("--concurrency must be a positive integer")
 
     settings = claimify_config.generate_dataset
 
-    # Select the appropriate generator function
     generators = {
         "selection": generate_selection_example,
         "disambiguation": generate_disambiguation_example,
@@ -410,105 +552,145 @@ def generate_dataset(
         )
     generator = generators[component]
 
-    # Read input lines
-    with open(input_file, "r", encoding="utf-8") as f:
-        lines = [line.strip() for line in f if line.strip()]
-    if not lines:
-        raise GenerationError("Input file is empty")
-
-    # Use the specified teacher model, or fall back to the config's default
-    final_teacher_model = teacher_model or claimify_config.get_model_for_stage(component)
-    print(f"Generating {len(lines)} examples for {component} component using {final_teacher_model}...")
+    final_teacher_model = teacher_model or claimify_config.get_model_for_stage(
+        component
+    )
+    print(
+        f"Generating examples for {component} component using {final_teacher_model}..."
+    )
     print("⚠️  WARNING: This may incur costs depending on your API provider and usage!")
 
-    # --- Context Generation Strategy ---
-    contexts = []
-    if component != "decomposition":
-        if settings.method == "static":
-            print("Using STATIC K-window context generation method.")
-            k = settings.static.k_window_size
-            contexts = [create_context_window(lines, i, k) for i in range(len(lines))]
+    jobs: list[dict[str, Any]] = []
 
-        elif settings.method == "semantic":
-            print("Using SEMANTIC context generation method.")
-            embedder_config = settings.semantic.embedder
-            context_params = settings.semantic.context_params
+    for file_path in files_to_process:
+        if curated_flag:
+            with open(file_path, "r", encoding="utf-8") as f_in:
+                prospects = json.load(f_in)
 
-            # 1. Initialize embedder
-            print(f"Initializing embedder: {embedder_config.type} (model: {embedder_config.model})")
-            embedder = _load_embedder(embedder_config)
+            for prospect in _iter_curated_examples(prospects, file_path):
+                target_sentence = prospect.get("target_sentence")
+                if not target_sentence:
+                    print(
+                        f"Skipping prospect in {file_path}: missing target_sentence",
+                        file=sys.stderr,
+                    )
+                    continue
 
-            # 2. Embed all sentences
-            print("Embedding all sentences...")
-            embeddings = embedder.embed(lines)
-
-            # Normalize embeddings for cosine similarity
-            if np.any(np.linalg.norm(embeddings, axis=1) - 1.0 > 1e-6):
-                 faiss.normalize_L2(embeddings)
-
-            # 3. Build FAISS index
-            print("Building FAISS index...")
-            index = faiss.IndexFlatIP(embeddings.shape[1]) # Using Inner Product for cosine similarity
-            index.add(embeddings)
-
-            # 4. Perform similarity search for each sentence
-            print("Performing similarity search...")
-            for i in tqdm.tqdm(range(len(lines)), desc="Finding similar contexts"):
-                query_vector = embeddings[i:i+1]
-
-                # Search for more than max_k to have options for filtering
-                search_k = min(len(lines), context_params.max_k + 1)
-                distances, indices = index.search(query_vector, search_k)
-
-                # Filter results
-                context_sentences = []
-                for j in range(len(indices[0])):
-                    neighbor_idx = indices[0][j]
-                    similarity = distances[0][j]
-
-                    # Skip the sentence itself
-                    if neighbor_idx == i:
-                        continue
-
-                    if similarity >= context_params.similarity_threshold:
-                        context_sentences.append(lines[neighbor_idx])
-
-                # Respect min_k and max_k
-                if len(context_sentences) < context_params.min_k:
-                    # If not enough sentences meet threshold, relax and take top k
-                    # (excluding the query sentence itself)
-                    all_neighbors = [idx for idx in indices[0] if idx != i]
-                    context_sentences = [lines[idx] for idx in all_neighbors[:context_params.min_k]]
-
-                final_context = "\n".join(context_sentences[:context_params.max_k])
-                contexts.append(final_context)
-        else:
-            raise ValueError(f"Unknown generation method in config: '{settings.method}'")
-
-    # --- Process each line and generate examples ---
-    successful_examples = 0
-    failed_examples = 0
-    with open(output_file, "w", encoding="utf-8") as f_out:
-        for i, line in enumerate(tqdm.tqdm(lines, desc="Generating examples")):
-            try:
-                example = None
                 if component == "decomposition":
-                    example = generator(line, final_teacher_model, model_params)
+                    args = (target_sentence, final_teacher_model, model_params)
+                else:
+                    context_text = prospect.get("context_text", "")
+                    if context_text is None:
+                        print(
+                            f"Skipping prospect in {file_path}: missing context_text",
+                            file=sys.stderr,
+                        )
+                        continue
+                    args = (
+                        context_text,
+                        target_sentence,
+                        final_teacher_model,
+                        model_params,
+                    )
+
+                jobs.append(
+                    {
+                        "func": generator,
+                        "args": args,
+                        "metadata": {
+                            "file_path": file_path,
+                            "curated": True,
+                        },
+                    }
+                )
+        else:
+            with open(file_path, "r", encoding="utf-8") as f_in:
+                content = f_in.read()
+
+            if clean_markdown_flag:
+                content = clean_markdown(content)
+
+            lines = re.split(r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[\.?!])\s", content)
+            lines = [line.strip() for line in lines if line.strip()]
+
+            if not lines:
+                continue
+
+            contexts: list[str] = []
+            if component != "decomposition":
+                if settings.method == "static":
+                    k = settings.static.k_window_size
+                    contexts = [
+                        create_context_window(lines, i, k) for i in range(len(lines))
+                    ]
+                elif settings.method == "semantic":
+                    embedder_config = settings.semantic.embedder
+                    context_params = settings.semantic.context_params
+
+                    embedder = _load_embedder(embedder_config)
+                    embeddings = embedder.embed(lines)
+
+                    if np.any(np.linalg.norm(embeddings, axis=1) - 1.0 > 1e-6):
+                        faiss.normalize_L2(embeddings)
+
+                    index = faiss.IndexFlatIP(embeddings.shape[1])
+                    index.add(embeddings)
+
+                    for i in range(len(lines)):
+                        query_vector = embeddings[i : i + 1]
+                        search_k = min(len(lines), context_params.max_k + 1)
+                        distances, indices = index.search(query_vector, search_k)
+
+                        context_sentences = []
+                        for neighbor_idx, similarity in zip(indices[0], distances[0]):
+                            if neighbor_idx == i:
+                                continue
+
+                            if similarity >= context_params.similarity_threshold:
+                                context_sentences.append(lines[neighbor_idx])
+
+                        if len(context_sentences) < context_params.min_k:
+                            all_neighbors = [idx for idx in indices[0] if idx != i]
+                            context_sentences = [
+                                lines[idx]
+                                for idx in all_neighbors[: context_params.min_k]
+                            ]
+
+                        final_context = "\n".join(
+                            context_sentences[: context_params.max_k]
+                        )
+                        contexts.append(final_context)
+                else:
+                    raise ValueError(
+                        f"Unknown generation method in config: '{settings.method}'"
+                    )
+
+            for i, line in enumerate(lines):
+                if component == "decomposition":
+                    args = (line, final_teacher_model, model_params)
                 else:
                     context = contexts[i]
-                    example = generator(context, line, final_teacher_model, model_params)
+                    args = (context, line, final_teacher_model, model_params)
 
-                if example is not None:
-                    f_out.write(json.dumps(example) + "\n")
-                    successful_examples += 1
-                else:
-                    failed_examples += 1
+                jobs.append(
+                    {
+                        "func": generator,
+                        "args": args,
+                        "metadata": {
+                            "file_path": file_path,
+                            "line_index": i,
+                            "curated": False,
+                        },
+                    }
+                )
 
-            except Exception as e:
-                failed_examples += 1
-                print(f"Error processing line {i + 1}: {e}", file=sys.stderr)
-                if hasattr(e, "__traceback__"):
-                    traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
+    if not jobs:
+        raise GenerationError("No generation jobs were created from the provided input")
+
+    with open(output_file, "w", encoding="utf-8") as f_out:
+        successful_examples, failed_examples = asyncio.run(
+            _run_generation_jobs(jobs, concurrency, f_out)
+        )
 
     print("\n✅ Generation complete!")
     print(f"   Successfully generated: {successful_examples} examples")

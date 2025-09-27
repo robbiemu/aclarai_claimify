@@ -3,15 +3,15 @@
 This module provides the CLI for compiling Claimify components using DSPy,
 allowing users to optimize their own datasets and models.
 """
+
 import argparse
 import importlib.resources as resources
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .config import load_claimify_config, load_optimization_config
-from .scout.config import load_scout_config
+
 
 try:
     from .optimization.compile import (
@@ -26,7 +26,9 @@ try:
 except ImportError:
 
     def _missing_optimization_deps(*args, **kwargs):
-        print("❌ Error: DSPy optimization features are not available.", file=sys.stderr)
+        print(
+            "❌ Error: DSPy optimization features are not available.", file=sys.stderr
+        )
         print("💡 Install optimization dependencies with:", file=sys.stderr)
         print("   pip install 'aclarai-claimify[optimization]'", file=sys.stderr)
         sys.exit(1)
@@ -85,13 +87,6 @@ Examples:
   # Show schema help
   aclarai-claimify schema --component selection
         """,
-    )
-
-    # Global flags
-    parser.add_argument(
-        "--no-robots",
-        action="store_true",
-        help="Ignore robots.txt rules when fetching URLs",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -206,10 +201,10 @@ Examples:
         description="Create training datasets by using a powerful teacher model to generate structured outputs from raw text inputs",
     )
     generate_parser.add_argument(
-        "--input-file",
+        "--input-path",
         type=Path,
         required=True,
-        help="Path to input text file (one sentence per line)",
+        help="Path to input text file (one sentence per line) or a directory of text files.",
     )
     generate_parser.add_argument(
         "--output-file",
@@ -230,10 +225,26 @@ Examples:
     )
     # Optional arguments
     generate_parser.add_argument(
+        "--curated",
+        action="store_true",
+        help="Indicates that the input path is a directory of curated JSON files.",
+    )
+    generate_parser.add_argument(
+        "--clean-markdown",
+        action="store_true",
+        help="Clean markdown syntax from input files before processing.",
+    )
+    generate_parser.add_argument(
         "--model-params",
         type=str,
         default="{}",
         help='JSON string with additional model parameters (e.g., \'{"temperature": 0.7, "max_tokens": 1000}\')',
+    )
+    generate_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Maximum number of concurrent requests to the teacher model.",
     )
 
     return parser
@@ -317,21 +328,13 @@ def validate_generate_args(args: argparse.Namespace) -> None:
         SystemExit: If validation fails
     """
     # Check input file exists
-    if not args.input_file.exists():
+    if not args.input_path.exists():
         print(
-            f"❌ Error: Input file not found: {args.input_file}",
+            f"❌ Error: Input path not found: {args.input_path}",
             file=sys.stderr,
         )
         print(
             "💡 Hint: Make sure the file path is correct and the file exists",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Check input file is a file (not directory)
-    if not args.input_file.is_file():
-        print(
-            f"❌ Error: Input path is not a file: {args.input_file}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -358,15 +361,12 @@ def validate_generate_args(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-
-def handle_robots_flag(args: argparse.Namespace) -> None:
-    """Handle the --no-robots flag.
-
-    Args:
-        args: Parsed command line arguments
-    """
-    if args.no_robots:
-        load_scout_config(use_robots=False)
+    if hasattr(args, "concurrency") and args.concurrency <= 0:
+        print(
+            f"❌ Error: --concurrency must be a positive integer, got: {args.concurrency}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def handle_init_command(args: argparse.Namespace) -> None:
@@ -569,12 +569,15 @@ def handle_generate_command(args: argparse.Namespace) -> None:
     try:
         # Run generation
         generate_dataset(
-            input_file=args.input_file,
+            input_path=args.input_path,
             output_file=args.output_file,
             component=args.component,
             teacher_model=args.teacher_model,
             model_params=model_params,
             claimify_config=claimify_config,
+            clean_markdown_flag=args.clean_markdown,
+            curated_flag=args.curated,
+            concurrency=args.concurrency,
         )
 
         print("\n🎉 Success! Your gold standard dataset is ready.")
@@ -617,9 +620,6 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
-    
-    # Handle global flags
-    handle_robots_flag(args)
 
     # Route to appropriate handler
     if args.command == "init":

@@ -105,14 +105,14 @@ class TestArgumentParsing:
         
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", "/tmp/input.txt",
+            "--input-path", "/tmp/input.txt",
             "--output-file", "/tmp/output.jsonl",
             "--component", "selection",
             "--teacher-model", "gpt-4o"
         ])
-        
+
         assert args.command == "generate-dataset"
-        assert args.input_file == Path("/tmp/input.txt")
+        assert args.input_path == Path("/tmp/input.txt")
         assert args.output_file == Path("/tmp/output.jsonl")
         assert args.component == "selection"
         assert args.teacher_model == "gpt-4o"
@@ -223,7 +223,7 @@ class TestArgumentValidation:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", str(tmp_path / "nonexistent.txt"),
+            "--input-path", str(tmp_path / "nonexistent.txt"),
             "--output-file", str(tmp_path / "output.jsonl"),
             "--component", "selection",
             "--teacher-model", "gpt-4o"
@@ -237,14 +237,14 @@ class TestArgumentValidation:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", str(tmp_path),  # This is a directory
+            "--input-path", str(tmp_path),  # This is a directory
             "--output-file", str(tmp_path / "output.jsonl"),
             "--component", "selection",
             "--teacher-model", "gpt-4o"
         ])
         
-        with pytest.raises(SystemExit):
-            validate_generate_args(args)
+        # Directories are supported for batch processing
+        validate_generate_args(args)
     
     def test_validate_generate_args_output_exists(self, tmp_path):
         """Test validation fails when output file exists."""
@@ -259,12 +259,30 @@ class TestArgumentValidation:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", str(input_file),
+            "--input-path", str(input_file),
             "--output-file", str(output_file),
             "--component", "selection",
             "--teacher-model", "gpt-4o"
         ])
-        
+
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
+
+    def test_validate_generate_args_invalid_concurrency(self, tmp_path):
+        """Test validation fails when concurrency is not positive."""
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", str(input_file),
+            "--output-file", str(tmp_path / "output.jsonl"),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o",
+            "--concurrency", "0",
+        ])
+
         with pytest.raises(SystemExit):
             validate_generate_args(args)
 
@@ -486,7 +504,7 @@ class TestCommandHandling:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", "/tmp/input.txt",
+            "--input-path", "/tmp/input.txt",
             "--output-file", "/tmp/output.jsonl",
             "--component", "selection",
             "--teacher-model", "gpt-4o"
@@ -501,6 +519,7 @@ class TestCommandHandling:
         
         # Verify that generate_dataset was called with correct arguments
         mock_generate.assert_called_once()
+        assert mock_generate.call_args.kwargs["concurrency"] == 1
     
     @patch('aclarai_claimify.cli.generate_dataset')
     @patch('aclarai_claimify.cli.validate_generate_args')
@@ -509,7 +528,7 @@ class TestCommandHandling:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", "/tmp/input.txt",
+            "--input-path", "/tmp/input.txt",
             "--output-file", "/tmp/output.jsonl",
             "--component", "selection",
             "--teacher-model", "gpt-4o"
@@ -529,7 +548,7 @@ class TestCommandHandling:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", "/tmp/input.txt",
+            "--input-path", "/tmp/input.txt",
             "--output-file", "/tmp/output.jsonl",
             "--component", "selection",
             "--teacher-model", "gpt-4o"
@@ -552,7 +571,7 @@ class TestCommandHandling:
         parser = create_parser()
         args = parser.parse_args([
             "generate-dataset",
-            "--input-file", "/tmp/input.txt",
+            "--input-path", "/tmp/input.txt",
             "--output-file", "/tmp/output.jsonl",
             "--component", "selection",
             "--teacher-model", "gpt-4o"

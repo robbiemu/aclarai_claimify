@@ -194,7 +194,7 @@ Use the built-in CLI to generate a structured dataset for a specific component:
 
 ```bash
 aclarai-claimify generate-dataset \
-    --input-file ./my_raw_sentences.txt \
+    --input-path ./my_raw_sentences.txt \
     --output-file ./my_decomposition_dataset.jsonl \
     --component decomposition \
     --teacher-model gpt-4o
@@ -202,14 +202,32 @@ aclarai-claimify generate-dataset \
 # For components that use context (selection, disambiguation), you can
 # control the context window size with the --k-window-size flag.
 aclarai-claimify generate-dataset \
-    --input-file ./my_raw_sentences.txt \
+    --input-path ./my_raw_sentences.txt \
     --output-file ./my_selection_dataset.jsonl \
     --component selection \
     --teacher-model gpt-4o \
     --k-window-size 3 # Use 3 sentences before and 3 after
+
+# When working from curated JSON prospects, enable parallel processing.
+aclarai-claimify generate-dataset \
+    --input-path ./examples/data/prospects/selection \
+    --output-file ./my_selection_dataset.jsonl \
+    --component selection \
+    --teacher-model gpt-4o \
+    --curated \
+    --concurrency 8
 ```
 
 ⚠️ **Warning**: This operation may incur costs depending on your API provider and usage!
+
+#### Helpful Flags
+
+- `--curated`: tells the generator that the input directory contains curated JSON files
+  (each file may hold positive/negative examples). Files without usable entries are
+  skipped automatically.
+- `--clean-markdown`: strips markdown formatting when reading `.md` sources.
+- `--concurrency`: caps simultaneous teacher-model calls; increase cautiously to stay
+  within provider rate limits.
 
 ### Step 3: Review and Refine
 

@@ -25,20 +25,30 @@ dev = [
     { name = "pytest" },
 ]
 optimization = [
+    { name = "aiohttp" },
     { name = "dspy-ai", version = "2.6.27", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "dspy-ai", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "faiss-cpu" },
+    { name = "json-repair", version = "0.44.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "json-repair", version = "0.50.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "litellm" },
     { name = "rich" },
     { name = "sentence-transformers" },
     { name = "tqdm" },
 ]
 
+[package.dev-dependencies]
+optimization = [
+    { name = "litellm" },
+]
+
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'optimization'", specifier = ">=3.12.15" },
     { name = "dspy-ai" },
     { name = "dspy-ai", marker = "extra == 'optimization'", specifier = ">=2.4.0" },
     { name = "faiss-cpu", marker = "extra == 'optimization'" },
+    { name = "json-repair", marker = "extra == 'optimization'", specifier = ">=0.44.1" },
     { name = "litellm", marker = "extra == 'optimization'" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'" },
@@ -48,6 +58,9 @@ requires-dist = [
     { name = "tqdm", marker = "extra == 'optimization'", specifier = ">=4.65.0" },
 ]
 provides-extras = ["dev", "optimization"]
+
+[package.metadata.requires-dev]
+optimization = [{ name = "litellm", specifier = ">=1.76.1" }]
 
 [[package]]
 name = "aiohappyeyeballs"

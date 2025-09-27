@@ -3,11 +3,6 @@ import re
 import sys
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
-try:
-    import requests
-except ImportError:
-    print("The 'requests' library is not installed. Please install it with 'pip install requests'")
-    sys.exit(1)
 
 
 def check_pedigree_robots_txt(pedigree_file="PEDIGREE.md", user_agent="*"):
@@ -28,11 +23,13 @@ def check_pedigree_robots_txt(pedigree_file="PEDIGREE.md", user_agent="*"):
         return
 
     entries = content.split("---")
-    
+
     # First pass: find all relevant entries to get a total count
     research_entries = []
     for entry in entries:
-        if re.search(r"Source Type:.*?'?researched'?", entry, re.IGNORECASE) and not re.search(r"Source Type:.*?'?synthetic'?", entry, re.IGNORECASE):
+        if re.search(
+            r"Source Type:.*?'?researched'?", entry, re.IGNORECASE
+        ) and not re.search(r"Source Type:.*?'?synthetic'?", entry, re.IGNORECASE):
             research_entries.append(entry)
 
     total_entries = len(research_entries)
@@ -46,17 +43,19 @@ def check_pedigree_robots_txt(pedigree_file="PEDIGREE.md", user_agent="*"):
     errant_entries = []
     processed_count = 0
     hashes_printed = 0
-    
+
     # Second pass: process the entries and update the progress bar
     for entry in research_entries:
         processed_count += 1
-        url_match = re.search(r"Source URL.*?[:\s`\(](https?://[^\s`\)]+)", entry, re.IGNORECASE)
-        
+        url_match = re.search(
+            r"Source URL.*?[:\s`\(](https?://[^\s`\)]+)", entry, re.IGNORECASE
+        )
+
         if url_match:
             url = url_match.group(1).strip()
-            if url.endswith(']'):
+            if url.endswith("]"):
                 url = url[:-1]
-            
+
             try:
                 parsed_url = urlparse(url)
                 robots_url = f"{parsed_url.scheme}://{parsed_url.netloc}/robots.txt"
@@ -72,14 +71,14 @@ def check_pedigree_robots_txt(pedigree_file="PEDIGREE.md", user_agent="*"):
         # Update the progress bar
         progress_percentage = (processed_count / total_entries) * 100
         hashes_to_print = int(progress_percentage // 3)
-        
+
         if hashes_to_print > hashes_printed:
             print("#" * (hashes_to_print - hashes_printed), end="", flush=True)
             hashes_printed = hashes_to_print
-    
+
     # Finalize the output
-    print("\n") # Move to the next line after the progress bar
-    
+    print("\n")  # Move to the next line after the progress bar
+
     print(f"Checked {total_entries} non-synthetic entries from '{pedigree_file}'.")
     if errant_entries:
         print("\nErrant entries (disallowed by robots.txt):")
@@ -94,5 +93,5 @@ if __name__ == "__main__":
         filepath = sys.argv[1]
     else:
         filepath = "PEDIGREE.md"
-    
+
     check_pedigree_robots_txt(filepath)
