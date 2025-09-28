@@ -204,9 +204,146 @@ class TestGenerateDataset:
                 claimify_config=self.mock_config,
             )
 
-        # Clean up
-        input_file.unlink()
-        mock_call.assert_not_called()
+    @patch("aclarai_claimify.optimization.generate.generate_selection_example")
+    def test_generate_dataset_curated_selection(self, mock_generate):
+        """Curated selection data should produce selection_response_json entries."""
+
+        def fake_generator(context, target, teacher_model, model_params):
+            return {
+                "context_text": context,
+                "target_sentence": target,
+                "selection_response_json": json.dumps(
+                    {
+                        "selected": True,
+                        "confidence": 0.9,
+                        "reasoning": "demo",
+                    }
+                ),
+            }
+
+        mock_generate.side_effect = fake_generator
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            curated_dir = Path(tmpdir) / "curated"
+            curated_dir.mkdir()
+            sample = {
+                "positive_example": {
+                    "target_sentence": "It failed with error 500.",
+                    "context_text": "The system was stable. It failed with error 500."
+                },
+                "negative_example": {
+                    "target_sentence": "This is excellent.",
+                    "context_text": "This is excellent."
+                }
+            }
+            with open(curated_dir / "sample.json", "w", encoding="utf-8") as f:
+                json.dump(sample, f)
+
+            output_file = Path(tmpdir) / "selection.jsonl"
+
+            generate_dataset(
+                input_path=curated_dir,
+                output_file=output_file,
+                component="selection",
+                teacher_model="teacher",
+                claimify_config=self.mock_config,
+                curated_flag=True,
+                concurrency=1,
+            )
+
+            lines = output_file.read_text().strip().splitlines()
+            assert len(lines) == 1
+            data = json.loads(lines[0])
+            assert data.get("sample_type") == "positive"
+            assert "selection_response_json" in data
+            parsed = json.loads(data["selection_response_json"])
+            assert parsed["selected"] is True
+
+    @patch("aclarai_claimify.optimization.generate.generate_disambiguation_example")
+    def test_generate_dataset_curated_disambiguation(self, mock_generate):
+        """Curated disambiguation data should produce disambiguation_response_json entries."""
+
+        def fake_generator(context, target, teacher_model, model_params):
+            return {
+                "context_text": context,
+                "target_sentence": target,
+                "disambiguation_response_json": json.dumps(
+                    {
+                        "disambiguated_text": target.replace("It", "The system"),
+                        "changes_made": ["Replaced pronoun"],
+                        "confidence": 0.8,
+                    }
+                ),
+            }
+
+        mock_generate.side_effect = fake_generator
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            curated_dir = Path(tmpdir) / "curated"
+            curated_dir.mkdir()
+            sample = {
+                "positive_example": {
+                    "target_sentence": "It failed with error 500.",
+                    "context_text": "The system was stable. It failed with error 500."
+                }
+            }
+            with open(curated_dir / "sample.json", "w", encoding="utf-8") as f:
+                json.dump(sample, f)
+
+            output_file = Path(tmpdir) / "disambiguation.jsonl"
+
+            generate_dataset(
+                input_path=curated_dir,
+                output_file=output_file,
+                component="disambiguation",
+                teacher_model="teacher",
+                claimify_config=self.mock_config,
+                curated_flag=True,
+                concurrency=1,
+            )
+
+            lines = output_file.read_text().strip().splitlines()
+            assert len(lines) == 1
+            data = json.loads(lines[0])
+            assert "disambiguation_response_json" in data
+
+    @patch("aclarai_claimify.optimization.generate.generate_selection_example")
+    def test_generate_dataset_curated_invalid_response(self, mock_generate):
+        """Missing expected fields should raise GenerationError and remove output file."""
+
+        mock_generate.return_value = {
+            "context_text": "ctx",
+            "target_sentence": "sentence",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            curated_dir = Path(tmpdir) / "curated"
+            curated_dir.mkdir()
+            sample = {
+                "positive_example": {
+                    "target_sentence": "Sentence",
+                    "context_text": "Context"
+                }
+            }
+            curated_path = curated_dir / "sample.json"
+            curated_path.write_text(json.dumps(sample))
+
+            output_file = Path(tmpdir) / "selection.jsonl"
+
+            with pytest.raises(GenerationError):
+                generate_dataset(
+                    input_path=curated_dir,
+                    output_file=output_file,
+                    component="selection",
+                    teacher_model="teacher",
+                    claimify_config=self.mock_config,
+                    curated_flag=True,
+                    concurrency=1,
+                )
+
+            assert not output_file.exists()
+
+        mock_generate.assert_called()
 
     def test_generate_dataset_invalid_component(self):
         """Test dataset generation with invalid component."""
@@ -227,6 +364,87 @@ class TestGenerateDataset:
 
         # Clean up
         input_file.unlink()
+
+    @patch("aclarai_claimify.optimization.generate.generate_disambiguation_negative_example")
+    @patch("aclarai_claimify.optimization.generate.generate_disambiguation_example")
+    def test_generate_dataset_curated_disambiguation_with_negatives(
+        self,
+        mock_positive,
+        mock_negative,
+    ):
+        """Curated disambiguation generation can emit labelled negative samples."""
+
+        mock_positive.return_value = {
+            "context_text": "[0] It failed with error 500.",
+            "target_sentence": "It failed with error 500.",
+            "disambiguation_response_json": json.dumps(
+                {
+                    "disambiguated_text": "The system failed with error 500.",
+                    "changes_made": ["Replaced pronoun"],
+                    "confidence": 0.9,
+                }
+            ),
+        }
+
+        mock_negative.return_value = {
+            "context_text": "[0] It failed with error 500.",
+            "target_sentence": "It failed with error 500.",
+            "disambiguation_response_json": json.dumps(
+                {
+                    "disambiguated_text": "It failed with error 500.",
+                    "changes_made": ["Left pronoun unresolved"],
+                    "confidence": 0.95,
+                }
+            ),
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            curated_dir = Path(tmpdir) / "curated"
+            curated_dir.mkdir()
+            sample = {
+                "positive_example": {
+                    "target_sentence": "It failed with error 500.",
+                    "context_text": "The system was stable. It failed with error 500.",
+                    "rationale": "High-impact pronoun."
+                },
+                "negative_examples": [
+                    {
+                        "failure_mode": "unresolved_referent",
+                        "target_sentence": "It failed with error 500.",
+                        "context_text": "The system was stable. It failed with error 500.",
+                        "rationale": "Likely to keep the pronoun."
+                    }
+                ],
+            }
+            (curated_dir / "sample.json").write_text(json.dumps(sample), encoding="utf-8")
+
+            output_file = Path(tmpdir) / "disambiguation.jsonl"
+
+            generate_dataset(
+                input_path=curated_dir,
+                output_file=output_file,
+                component="disambiguation",
+                teacher_model="teacher",
+                claimify_config=self.mock_config,
+                curated_flag=True,
+                concurrency=1,
+                include_negatives=True,
+                negative_quota=1,
+            )
+
+            lines = output_file.read_text().strip().splitlines()
+            assert len(lines) == 2
+
+            positive = json.loads(lines[0])
+            negative = json.loads(lines[1])
+
+            assert positive["sample_type"] == "positive"
+            assert negative["sample_type"] == "negative"
+            assert negative["failure_mode"] == "unresolved_referent"
+            parsed_negative = json.loads(negative["disambiguation_response_json"])
+            assert parsed_negative["disambiguated_text"].startswith("It failed")
+            assert negative.get("prospect_label") == "negative_unresolved_referent"
+            mock_negative.assert_called_once()
 
     @patch("aclarai_claimify.optimization.generate.call_teacher_model")
     def test_generate_dataset_success(self, mock_call):
@@ -374,5 +592,5 @@ class TestGenerateDataset:
         assert output_file.exists()
         with output_file.open() as handle:
             lines = handle.readlines()
-        assert len(lines) == 2
-        assert mock_call.call_count == 2
+        assert len(lines) == 1
+        assert mock_call.call_count == 1

@@ -58,11 +58,24 @@ Your task is to analyze the following document and select the single best positi
 """
     elif component == "disambiguation":
         return f"""You are an expert in data quality for training AI models.
-Your task is to analyze the following document and select the single best positive example and the single best negative example of a sentence that requires disambiguation.
+Your task is to analyze the following document and surface:
+- one **positive example** that clearly requires disambiguation, and
+- as many **negative examples** as you can find that illustrate different failure modes for disambiguation outputs.
 
-**Definitions:**
-- A **positive example** is a sentence that contains pronouns or ambiguous references that need to be resolved using the context.
-- A **negative example** is a sentence that is already self-contained and does not require any disambiguation.
+**Positive example:**
+- Target a sentence whose pronouns, deictic phrases, or elliptical references demand carefully grounded rewrites.
+- Choose a case that, when rewritten correctly, would avoid all common disambiguation failure modes (no hallucinations, no lost qualifiers, single well-formed sentence, etc.).
+
+**Negative failure modes:**
+Label each negative example with one of the following identifiers (use snake_case exactly as written):
+- unresolved_referent
+- hallucinated_detail
+- omitted_constraint
+- formatting_drift
+- unsupported_resolution
+- confidence_mismatch
+
+Negative examples should be sentences where an inexperienced model would likely fall into that failure mode when rewriting. Provide context that makes the pitfall obvious.
 
 **Document Content:**
 ---
@@ -70,31 +83,49 @@ Your task is to analyze the following document and select the single best positi
 ---
 
 **Your Task:**
-1.  Read the entire document.
-2.  Identify the single best positive example of a sentence that requires disambiguation.
-3.  Identify the single best negative example (a self-contained sentence).
-4.  For each of the two selected sentences, provide the sentence itself and the two sentences immediately before and after it as context.
-5.  Return a single JSON object with the keys "positive_example" and "negative_example". Each key should contain the "target_sentence" and "context_text".
-
-**JSON Output Format:**
+1.  Read the document.
+2.  Select the strongest positive example per guidance above.
+3.  Collect a diverse set of negative examples, ideally one per failure mode. Skip a mode if the document truly lacks a representative sentence.
+4.  For every example, include the sentence itself and the two surrounding sentences as context.
+5.  Return a JSON object matching this schema:
 {{
   "positive_example": {{
     "target_sentence": "...",
-    "context_text": "..."
+    "context_text": "...",
+    "rationale": "Explain why this is an excellent disambiguation case."
   }},
-  "negative_example": {{
-    "target_sentence": "...",
-    "context_text": "..."
-  }}
+  "negative_examples": [
+    {{
+      "failure_mode": "unresolved_referent",
+      "target_sentence": "...",
+      "context_text": "...",
+      "rationale": "Explain why this context tempts that failure mode."
+    }},
+    ...
+  ]
 }}
+Ensure all rationales are concise (<= 2 sentences each).
 """
     elif component == "decomposition":
         return f"""You are an expert in data quality for training AI models.
-Your task is to analyze the following document and select the single best positive example and the single best negative example of a sentence that requires decomposition.
+Your task is to analyze the following document and surface:
+- one **positive example** that truly requires decomposition into multiple atomic claims, and
+- as many **negative examples** as you can find that demonstrate different decomposition failure modes.
 
-**Definitions:**
-- A **positive example** is a long, complex sentence with multiple clauses that can be broken down into smaller, atomic claims.
-- A **negative example** is a short, simple, atomic sentence that cannot be broken down further.
+**Positive example:**
+- Pick a sentence whose faithful decomposition should yield multiple high-quality claims.
+- The sentence should cover several verifiable ideas with clear distinctions so a careful model can avoid common pitfalls.
+
+**Negative failure modes:**
+Label each negative example with one of the following identifiers (use snake_case exactly as written):
+- non_atomic_claim
+- missing_key_claim
+- incorrect_metadata
+- off_topic_hallucination
+- structure_violation
+- low_information_reasoning
+
+Negative examples should be sentences where a naïve decomposition step would likely trigger that failure (e.g., fusing claims, losing key content, returning empty or malformed metadata).
 
 **Document Content:**
 ---
@@ -102,23 +133,28 @@ Your task is to analyze the following document and select the single best positi
 ---
 
 **Your Task:**
-1.  Read the entire document.
-2.  Identify the single best positive example of a sentence that requires decomposition.
-3.  Identify the single best negative example (an atomic sentence).
-4.  For each of the two selected sentences, provide the sentence itself and the two sentences immediately before and after it as context.
-5.  Return a single JSON object with the keys "positive_example" and "negative_example". Each key should contain the "target_sentence" and "context_text".
-
-**JSON Output Format:**
+1.  Read the document.
+2.  Select the strongest positive example per guidance above.
+3.  Collect a diverse set of negative examples, ideally one per failure mode. Skip a mode if the document lacks a representative sentence.
+4.  For every example, include the sentence itself and the two surrounding sentences as context.
+5.  Return a JSON object matching this schema:
 {{
   "positive_example": {{
     "target_sentence": "...",
-    "context_text": "..."
+    "context_text": "...",
+    "rationale": "Explain why this supports a rich decomposition."
   }},
-  "negative_example": {{
-    "target_sentence": "...",
-    "context_text": "..."
-  }}
+  "negative_examples": [
+    {{
+      "failure_mode": "non_atomic_claim",
+      "target_sentence": "...",
+      "context_text": "...",
+      "rationale": "Explain why this context encourages that failure."
+    }},
+    ...
+  ]
 }}
+Keep rationales concise (<= 2 sentences each).
 """
     else:
         raise ValueError(f"Invalid component: {component}")
@@ -138,7 +174,7 @@ def clean_markdown(content: str) -> str:
     content = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", content)
     content = re.sub(r"^\s*[-*+]\s+", "", content, flags=re.MULTILINE)
     content = re.sub(r"`{{1,3}}[\s\S]*?`{{1,3}}", "", content)
-    content = re.sub(r"^---\s*$", "", content, flags=re.MULTILLINE)
+    content = re.sub(r"^---\s*$", "", content, flags=re.MULTILINE)
     content = re.sub(r"^>\s?", "", content, flags=re.MULTILINE)
     return content
 

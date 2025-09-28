@@ -246,6 +246,23 @@ Examples:
         default=1,
         help="Maximum number of concurrent requests to the teacher model.",
     )
+    generate_parser.add_argument(
+        "--include-negatives",
+        action="store_true",
+        help="Also generate curated negative samples (disambiguation & decomposition only).",
+    )
+    generate_parser.add_argument(
+        "--negative-quota",
+        type=int,
+        default=0,
+        help="Minimum count per failure mode for generated negatives (requires --include-negatives).",
+    )
+    generate_parser.add_argument(
+        "--max-examples",
+        type=int,
+        default=None,
+        help="Limit total teacher calls for smoke tests.",
+    )
 
     return parser
 
@@ -357,6 +374,34 @@ def validate_generate_args(args: argparse.Namespace) -> None:
         )
         print(
             "💡 Hint: Remove the existing file or specify a different output path",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if args.include_negatives and args.component == "selection":
+        print(
+            "ℹ️  Ignoring --include-negatives for the selection component (negatives already implicit in labels).",
+            file=sys.stderr,
+        )
+        args.include_negatives = False
+
+    if args.negative_quota < 0:
+        print(
+            f"❌ Error: --negative-quota must be >= 0, got {args.negative_quota}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if args.negative_quota and not args.include_negatives:
+        print(
+            "ℹ️  --negative-quota specified without --include-negatives; quota will be ignored.",
+            file=sys.stderr,
+        )
+        args.negative_quota = 0
+
+    if args.max_examples is not None and args.max_examples <= 0:
+        print(
+            "❌ Error: --max-examples must be a positive integer.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -578,6 +623,9 @@ def handle_generate_command(args: argparse.Namespace) -> None:
             clean_markdown_flag=args.clean_markdown,
             curated_flag=args.curated,
             concurrency=args.concurrency,
+            include_negatives=args.include_negatives,
+            negative_quota=args.negative_quota,
+            max_examples=args.max_examples,
         )
 
         print("\n🎉 Success! Your gold standard dataset is ready.")

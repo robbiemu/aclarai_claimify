@@ -1,0 +1,16 @@
+optimizer_name: "gepa"
+params:
+  auto: "medium"
+  reflection_minibatch_size: 35
+  candidate_selection_strategy: "pareto"
+  skip_perfect_score: true
+  add_format_failure_as_feedback: false
+  use_merge: true
+  max_merge_invocations: 5
+  num_threads: 4
+  failure_score: 0.0
+  perfect_score: 1.0
+  track_stats: true
+  track_best_outputs: true
+  seed: 42
+  # log_dir: "examples/gepa_logs" # after https://github.com/stanfordnlp/dspy/issues/1221 resolves

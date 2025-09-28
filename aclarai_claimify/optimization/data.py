@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import dspy
 
+from .failure_modes import (
+    DISAMBIGUATION_FAILURE_MODES,
+    DECOMPOSITION_FAILURE_MODES,
+)
+
 
 class DataValidationError(Exception):
     """Raised when dataset validation fails."""
@@ -108,7 +113,7 @@ def validate_disambiguation_record(record: Dict[str, Any], line_num: int) -> Non
             raise DataValidationError(
                 f"Field '{field}' must be string on line {line_num}"
             )
-    
+
     # Validate that disambiguation_response_json is valid JSON
     try:
         disambiguation_data = json.loads(record["disambiguation_response_json"])
@@ -120,6 +125,19 @@ def validate_disambiguation_record(record: Dict[str, Any], line_num: int) -> Non
         raise DataValidationError(
             f"Invalid JSON in disambiguation_response_json on line {line_num}: {e}"
         ) from e
+
+    sample_type = record.get("sample_type", "positive")
+    if sample_type not in {"positive", "negative"}:
+        raise DataValidationError(
+            f"Invalid sample_type '{sample_type}' on line {line_num}; expected 'positive' or 'negative'"
+        )
+
+    if sample_type == "negative":
+        failure_mode = record.get("failure_mode")
+        if failure_mode not in DISAMBIGUATION_FAILURE_MODES:
+            raise DataValidationError(
+                f"Negative disambiguation sample missing or invalid failure_mode on line {line_num}"
+            )
 
 
 def validate_decomposition_record(record: Dict[str, Any], line_num: int) -> None:
@@ -141,7 +159,7 @@ def validate_decomposition_record(record: Dict[str, Any], line_num: int) -> None
             raise DataValidationError(
                 f"Field '{field}' must be string on line {line_num}"
             )
-    
+
     # Validate that decomposition_response_json is valid JSON
     try:
         decomposition_data = json.loads(record["decomposition_response_json"])
@@ -153,6 +171,19 @@ def validate_decomposition_record(record: Dict[str, Any], line_num: int) -> None
         raise DataValidationError(
             f"Invalid JSON in decomposition_response_json on line {line_num}: {e}"
         ) from e
+
+    sample_type = record.get("sample_type", "positive")
+    if sample_type not in {"positive", "negative"}:
+        raise DataValidationError(
+            f"Invalid sample_type '{sample_type}' on line {line_num}; expected 'positive' or 'negative'"
+        )
+
+    if sample_type == "negative":
+        failure_mode = record.get("failure_mode")
+        if failure_mode not in DECOMPOSITION_FAILURE_MODES:
+            raise DataValidationError(
+                f"Negative decomposition sample missing or invalid failure_mode on line {line_num}"
+            )
 
 
 def validate_records_for_component(
@@ -206,6 +237,8 @@ def map_to_examples(
     
     examples = []
     for i, record in enumerate(records, 1):
+        if record.get("sample_type", "positive") != "positive":
+            continue
         # Check that all signature input fields are present
         missing_inputs = set(signature_inputs) - set(record.keys())
         if missing_inputs:
@@ -298,6 +331,8 @@ Each line should contain a JSON object with:
 - target_sentence: String with the sentence to disambiguate
 - disambiguation_response_json: JSON string with disambiguation result, e.g.:
   '{"disambiguated_text": "The system failed with error 500.", "changes_made": ["Replaced it with the system"], "confidence": 0.9}'
+- sample_type: Optional string ('positive' by default, 'negative' for curated failure cases)
+- failure_mode: Required when sample_type == 'negative' (e.g., 'unresolved_referent')
 
 Example line:
 {"context_text": "[0] The system was stable.", "target_sentence": "It failed with error 500.", "disambiguation_response_json": "{\\"disambiguated_text\\": \\"The system failed with error 500.\\", \\"changes_made\\": [\\"Replaced 'it' with 'the system'\\"], \\"confidence\\": 0.9}"}
@@ -308,6 +343,8 @@ Each line should contain a JSON object with:
 - disambiguated_text: String with the disambiguated sentence to decompose
 - decomposition_response_json: JSON string with claim candidates, e.g.:
   '{"claim_candidates": [{"text": "The system failed with error 500.", "is_atomic": true, "is_self_contained": true, "is_verifiable": true, "passes_criteria": true, "confidence": 0.95, "reasoning": "Single verifiable fact"}]}'
+- sample_type: Optional string ('positive' or 'negative')
+- failure_mode: Required when sample_type == 'negative' (e.g., 'non_atomic_claim')
 
 Example line:
 {"disambiguated_text": "The system failed with error 500.", "decomposition_response_json": "{\\"claim_candidates\\": [{\\"text\\": \\"The system failed with error 500.\\", \\"is_atomic\\": true, \\"is_self_contained\\": true, \\"is_verifiable\\": true, \\"passes_criteria\\": true, \\"confidence\\": 0.95, \\"reasoning\\": \\"Single verifiable fact\\", \\"node_type\\": \\"Claim\\"}]}"}
