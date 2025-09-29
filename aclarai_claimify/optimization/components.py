@@ -7,9 +7,10 @@ and create evaluation metrics for each Claimify pipeline component.
 import functools
 import inspect
 import json
+import math
 import re
 from difflib import SequenceMatcher
-from typing import Callable, Type
+from typing import Callable, Type, Iterable
 
 import dspy
 
@@ -27,6 +28,23 @@ _VAGUE_REFERENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _NEGATION_WORDS = {"not", "never", "no", "none", "without", "neither", "nor"}
+
+_COORDINATION_EXCEPTION_PATTERNS = (
+    re.compile(r"\bboth\b[\s\S]{0,80}?\band\b", re.IGNORECASE),
+    re.compile(r"\beither\b[\s\S]{0,80}?\bor\b", re.IGNORECASE),
+    re.compile(r"\bneither\b[\s\S]{0,80}?\bnor\b", re.IGNORECASE),
+    re.compile(r"\bbetween\b[\s\S]{0,80}?\band\b", re.IGNORECASE),
+)
+
+_COORDINATION_PATTERN = re.compile(r"\b(and|;|,\s*(and|or)|or)\b", re.IGNORECASE)
+
+_CLAIM_TEXT_ALIASES = ("text", "claim_text", "claim", "value")
+
+
+def _is_coordination_exception(text: str) -> bool:
+    """Return True when coordination marks appear in an allowed construction."""
+
+    return any(pattern.search(text) for pattern in _COORDINATION_EXCEPTION_PATTERNS)
 
 
 def _normalize_for_similarity(text: str) -> str:
@@ -200,43 +218,119 @@ def _detect_disambiguation_failure(
 def _detect_decomposition_failure(
     claim_candidates: list,
     source_text: str,
-) -> tuple[bool, str]:
-    """Return whether the predicted decomposition exhibits a failure mode."""
+) -> tuple[bool, float, list[str], list[str], list[str]]:
+    """Inspect predicted claims and return fatal status, penalties, messages, normalized and raw texts."""
 
     if not isinstance(claim_candidates, list):
-        return True, "claim_candidates must be an array of objects."
+        return True, math.inf, ["claim_candidates must be an array of objects."], [], []
 
     if not claim_candidates:
-        return True, "No claim candidates generated."
+        return True, math.inf, ["No claim candidates generated."], [], []
 
     source_tokens = set(_tokenize_words(source_text))
+    penalty_weight = 0.0
+    messages: list[str] = []
+    normalized_texts: list[str] = []
+    raw_texts: list[str] = []
 
     for candidate in claim_candidates:
         if not isinstance(candidate, dict):
-            return True, "Each claim candidate must be a JSON object."
+            return True, math.inf, ["Each claim candidate must be a JSON object."], [], []
 
-        text = str(candidate.get("text", "")).strip()
-        if not text:
-            return True, "Claim candidate has empty text."
+        text_value = None
+        alias_used = None
+        for key in _CLAIM_TEXT_ALIASES:
+            value = candidate.get(key)
+            if isinstance(value, str) and value.strip():
+                text_value = value.strip()
+                alias_used = key
+                break
 
-        lower_text = text.lower()
-        if candidate.get("is_atomic") and re.search(r"\b(and|;|,\s*and)\b", lower_text):
-            return True, "Claim candidate still bundles multiple assertions."
+        if text_value is None:
+            penalty_weight += 4.0
+            messages.append("Missing claim text; candidate ignored.")
+            continue
 
-        if candidate.get("passes_criteria") and not all(
-            candidate.get(flag) for flag in ("is_atomic", "is_self_contained", "is_verifiable")
+        if alias_used != "text":
+            penalty_weight += 4.0
+            messages.append(f"Used nonstandard key '{alias_used}' for claim text.")
+
+        lower_text = text_value.lower()
+        if candidate.get("is_atomic") and _COORDINATION_PATTERN.search(lower_text):
+            if not _is_coordination_exception(lower_text):
+                penalty_weight += 2.0
+                messages.append("Potentially bundles multiple assertions.")
+
+        passes_criteria = candidate.get("passes_criteria")
+        if passes_criteria is None:
+            penalty_weight += 4.0
+            messages.append("Missing passes_criteria flag.")
+        elif not isinstance(passes_criteria, bool):
+            penalty_weight += 4.0
+            messages.append("passes_criteria must be boolean.")
+        elif passes_criteria and not all(
+            candidate.get(flag) is True for flag in ("is_atomic", "is_self_contained", "is_verifiable")
         ):
-            return True, "passes_criteria is inconsistent with quality flags."
+            penalty_weight += 4.0
+            messages.append("passes_criteria inconsistent with quality flags.")
+
+        for field in ("is_atomic", "is_self_contained", "is_verifiable"):
+            value = candidate.get(field)
+            if value is None:
+                penalty_weight += 2.0
+                messages.append(f"Missing {field} flag.")
+            elif not isinstance(value, bool):
+                penalty_weight += 2.0
+                messages.append(f"{field} must be boolean.")
 
         reasoning = str(candidate.get("reasoning", "")).strip()
-        if candidate.get("passes_criteria") and len(reasoning) < 8:
-            return True, "Reasoning is too sparse to justify a high-quality claim."
+        if passes_criteria and len(reasoning) < 15:
+            penalty_weight += 0.5
+            messages.append("Reasoning too short to justify high-quality claim.")
 
-        extra_tokens = set(_tokenize_words(text)) - source_tokens
+        extra_tokens = set(_tokenize_words(text_value)) - source_tokens
         if extra_tokens and len(extra_tokens) >= 2:
-            return True, "Claim introduces content not present in the source sentence."
+            penalty_weight += 2.0
+            messages.append("Introduces tokens absent from source sentence.")
 
-    return False, ""
+        normalized_texts.append(_normalize_for_similarity(text_value))
+        raw_texts.append(text_value)
+
+    return False, penalty_weight, messages, normalized_texts, raw_texts
+
+
+def _fuzzy_overlap_score(expected_texts: Iterable[str], predicted_texts: Iterable[str]) -> float:
+    """Compute a soft overlap score using sequence similarity."""
+
+    expected_list = [text.lower() for text in expected_texts if text]
+    predicted_list = [text.lower() for text in predicted_texts if text]
+
+    if not expected_list or not predicted_list:
+        return 0.0
+
+    def best_scores(source: list[str], target: list[str]) -> list[float]:
+        scores: list[float] = []
+        for s in source:
+            best = 0.0
+            for t in target:
+                ratio = SequenceMatcher(None, s, t).ratio()
+                if ratio > best:
+                    best = ratio
+                    if best >= 0.99:
+                        break
+            scores.append(best)
+        return scores
+
+    expected_best = best_scores(expected_list, predicted_list)
+    predicted_best = best_scores(predicted_list, expected_list)
+
+    precision = sum(predicted_best) / len(predicted_best)
+    recall = sum(expected_best) / len(expected_best)
+
+    if precision + recall == 0:
+        return 0.0
+
+    return 2 * (precision * recall) / (precision + recall)
 
 
 def _score_decomposition_output(
@@ -257,21 +351,45 @@ def _score_decomposition_output(
     if not isinstance(predicted, dict):
         return 0.0, "Output JSON must contain claim_candidates list."
 
-    predicted_candidates = predicted.get("claim_candidates", [])
+    penalty_weight = 0.0
+    penalty_messages: list[str] = []
+
+    predicted_candidates = predicted.get("claim_candidates")
+    if not isinstance(predicted_candidates, list):
+        for alias in ("claims", "candidates", "items"):
+            candidate_list = predicted.get(alias)
+            if isinstance(candidate_list, list):
+                penalty_weight += 2.0
+                penalty_messages.append(
+                    f"Used nonstandard key '{alias}' for claim list."
+                )
+                predicted_candidates = candidate_list
+                break
+
+    if not isinstance(predicted_candidates, list):
+        return 0.0, "Output must include an array of claim candidates."
+
     source_text = getattr(example, "disambiguated_text", "") or ""
-    failure, failure_msg = _detect_decomposition_failure(predicted_candidates, source_text)
-    if failure:
-        return 0.0, failure_msg
+    (
+        fatal,
+        candidate_penalty,
+        candidate_messages,
+        normalized_texts,
+        raw_texts,
+    ) = _detect_decomposition_failure(predicted_candidates, source_text)
+    if fatal:
+        failure_message = candidate_messages[0] if candidate_messages else "Prediction failed quality checks."
+        return 0.0, failure_message
+
+    penalty_weight += candidate_penalty
+    penalty_messages.extend(candidate_messages)
 
     expected_claims = set()
     for candidate in expected.get("claim_candidates", []):
         if isinstance(candidate, dict) and "text" in candidate:
             expected_claims.add(_normalize_for_similarity(candidate["text"]))
 
-    predicted_claims = set()
-    for candidate in predicted_candidates:
-        if isinstance(candidate, dict) and "text" in candidate:
-            predicted_claims.add(_normalize_for_similarity(candidate["text"]))
+    predicted_claims = set(normalized_texts)
 
     if not expected_claims and not predicted_claims:
         return 1.0, "Both reference and prediction contain no claims."
@@ -284,13 +402,43 @@ def _score_decomposition_output(
     recall = len(intersection) / len(expected_claims) if expected_claims else 0.0
 
     if precision + recall == 0:
-        return 0.0, "Predicted claims did not overlap with reference claims."
+        fuzzy_f1 = _fuzzy_overlap_score(
+            [candidate.get("text", "") for candidate in expected.get("claim_candidates", [])],
+            raw_texts,
+        )
+        if fuzzy_f1 == 0.0:
+            if normalized_texts:
+                base_score = 0.05
+                penalty_messages.append(
+                    "Returned claims but none overlapped reference; applying minimal score."
+                )
+            else:
+                base_score = 0.0
+        else:
+            base_score = fuzzy_f1 * 0.5
+            penalty_messages.append(
+                "Applied fuzzy matching because exact overlap was zero."
+            )
+            precision = recall = fuzzy_f1
+    else:
+        base_score = 2 * (precision * recall) / (precision + recall)
 
-    f1 = 2 * (precision * recall) / (precision + recall)
-    message = (
-        f"Claim overlap F1: {f1:.2f} (precision {precision:.2f}, recall {recall:.2f})."
-    )
-    return f1, message
+    feedback_parts = [
+        f"Claim overlap F1: {base_score:.2f} (precision {precision:.2f}, recall {recall:.2f})."
+    ]
+
+    if penalty_weight > 0:
+        penalty_factor = 1.0 / (1.0 + penalty_weight)
+        adjusted_score = base_score * penalty_factor
+        penalty_detail = (
+            f"Penalty factor {penalty_factor:.3f} derived from weighted issues ({penalty_weight:.2f})."
+        )
+        if penalty_messages:
+            penalty_detail += " Issues: " + "; ".join(penalty_messages)
+        feedback_parts.insert(0, penalty_detail)
+        return adjusted_score, " ".join(feedback_parts)
+
+    return base_score, " ".join(feedback_parts)
 
 
 def _score_disambiguation_output(

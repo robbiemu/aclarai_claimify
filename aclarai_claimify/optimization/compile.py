@@ -449,6 +449,7 @@ def compile_component(
     verbose: bool = True,
     model_params: Optional[Dict[str, Any]] = None,
     k_window_size: Optional[int] = None,
+    program_style: str = "cot",
 ) -> None:
     """Compile a Claimify component using DSPy optimization.
 
@@ -466,6 +467,7 @@ def compile_component(
         verbose: Whether to print detailed output
         model_params: Additional model parameters to pass to LiteLLM
         k_window_size: Context window size used for the trainset
+        program_style: DSPy program style to use when building the module (cot or predict)
     """
 
     if verbose:
@@ -517,7 +519,8 @@ def compile_component(
         # 6. Build program
         if verbose:
             print("🏗️  Building program...")
-        program = build_program(signature, style="cot")
+            print(f"   Program style: {program_style}")
+        program = build_program(signature, style=program_style)
 
         # 7. Run optimization
         optimizer_dict = optimizer_config.model_dump()
@@ -577,6 +580,8 @@ def compile_component(
             other_params=artifact_params,
         )
 
+        dspy_serialized: Optional[Dict[str, Any]] = None
+
         artifact = create_artifact_dict(
             component=component,
             signature_name=component_info["signature_name"],
@@ -585,7 +590,9 @@ def compile_component(
             optimizer_params=optimizer_params,
             few_shots=few_shots,
             system_prompt=system_prompt,
+            program_style=program_style,
             validation_metrics=validation_metrics,
+            dspy_serialized=dspy_serialized,
             k_window_size=k_window_size,
         )
 

@@ -157,6 +157,12 @@ Examples:
         help='JSON string with additional model parameters (e.g., \'{"temperature": 0.7, "max_tokens": 1000}\')',
     )
     compile_parser.add_argument(
+        "--program-style",
+        choices=["cot", "predict"],
+        default="cot",
+        help="DSPy module style to use when building the program (cot or predict).",
+    )
+    compile_parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -513,6 +519,7 @@ def handle_compile_command(args: argparse.Namespace) -> None:
             verbose=verbose,
             model_params=model_params,
             k_window_size=args.k_window_size,
+            program_style=args.program_style,
             claimify_config=claimify_config,
             optimizer_config=optim_config,
         )

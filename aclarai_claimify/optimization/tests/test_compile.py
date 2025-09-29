@@ -27,6 +27,7 @@ from aclarai_claimify.optimization.compile import (
     OptimizationError,
     DataValidationError,
 )
+from aclarai_claimify.optimization.components import _score_decomposition_output
 
 
 class TestModelInitialization:
@@ -584,12 +585,15 @@ class TestCompileComponent:
         mock_validate_examples.assert_called_once()
         mock_split.assert_called_once()
         mock_init_models.assert_called_once()
-        mock_build.assert_called_once()
+        mock_build.assert_called_once_with(mock_signature, style='cot')
         mock_optimize.assert_called_once()
         mock_evaluate.assert_called_once()
         mock_extract_shots.assert_called_once()
         mock_extract_prompt.assert_called_once()
         mock_create.assert_called_once()
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs.get('program_style') == 'cot'
+        assert create_kwargs.get('dspy_serialized') is None
         mock_save.assert_called_once_with(
             {"test": "artifact"}, Path("/tmp/output.json")
         )
@@ -730,6 +734,76 @@ def test_compile_component_gepa_passes_log_dir(tmp_path):
     assert expected_log_dir.exists()
     assert captured["optimizer_dict"]["params"]["log_dir"] == str(expected_log_dir)
     assert data["optimizer_params"]["other_params"]["log_dir"] == str(expected_log_dir)
+
+
+class TestDecompositionMetric:
+    """Targeted tests that ensure partial-credit scoring for decomposition output."""
+
+    @staticmethod
+    def _make_example() -> SimpleNamespace:
+        gold_payload = {
+            "claim_candidates": [
+                {
+                    "text": "Alice built a 3D printer.",
+                    "is_atomic": True,
+                    "is_self_contained": True,
+                    "is_verifiable": True,
+                    "passes_criteria": True,
+                    "confidence": 0.9,
+                    "reasoning": "Single factual statement about Alice's action.",
+                    "node_type": "Claim",
+                }
+            ]
+        }
+        return SimpleNamespace(
+            disambiguated_text="Alice built a 3D printer.",
+            decomposition_response_json=json.dumps(gold_payload),
+        )
+
+    def test_metric_returns_full_score_for_exact_match(self):
+        example = self._make_example()
+        prediction = SimpleNamespace(
+            decomposition_response_json=example.decomposition_response_json
+        )
+
+        score, feedback = _score_decomposition_output(example, prediction)
+
+        assert score == pytest.approx(1.0)
+        assert "Claim overlap F1" in feedback
+
+    def test_metric_applies_weighted_penalty_instead_of_zero(self):
+        example = self._make_example()
+        penalized_payload = json.loads(example.decomposition_response_json)
+        penalized_payload["claim_candidates"][0].update(
+            {
+                "text": "Alice built a 3D printer.",
+                "reasoning": "Too short.",
+            }
+        )
+        prediction = SimpleNamespace(
+            decomposition_response_json=json.dumps(penalized_payload)
+        )
+
+        score, feedback = _score_decomposition_output(example, prediction)
+
+        assert 0 < score < 1
+        assert "Penalty factor" in feedback
+        assert "Reasoning too short" in feedback
+
+    def test_metric_handles_legacy_claims_key_with_penalty(self):
+        example = self._make_example()
+        legacy_payload = json.loads(example.decomposition_response_json)
+        payload = {
+            "claims": legacy_payload["claim_candidates"],
+        }
+        prediction = SimpleNamespace(
+            decomposition_response_json=json.dumps(payload)
+        )
+
+        score, feedback = _score_decomposition_output(example, prediction)
+
+        assert 0 < score < 1
+        assert "nonstandard key 'claims'" in feedback
 
     @patch("aclarai_claimify.optimization.compile.get_component_info")
     def test_compile_component_data_validation_error(self, mock_get_component):

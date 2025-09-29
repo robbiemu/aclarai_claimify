@@ -125,6 +125,10 @@ class CompiledArtifact(BaseModel):
         None, 
         description="System/instruction prompt (if available)"
     )
+    program_style: Optional[str] = Field(
+        default=None,
+        description="DSPy program style used when compiling (e.g., cot or predict)",
+    )
     
     # Validation results
     validation_metrics: Optional[ValidationMetrics] = Field(
@@ -202,6 +206,7 @@ def create_artifact_dict(
     optimizer_params: OptimizerParams,
     few_shots: Optional[List[FewShotExample]] = None,
     system_prompt: Optional[str] = None,
+    program_style: Optional[str] = None,
     validation_metrics: Optional[ValidationMetrics] = None,
     dspy_serialized: Optional[Dict[str, Any]] = None,
     k_window_size: Optional[int] = None,
@@ -231,6 +236,7 @@ def create_artifact_dict(
         optimizer_params=optimizer_params,
         few_shots=few_shots or [],
         system_prompt=system_prompt,
+        program_style=program_style,
         validation_metrics=validation_metrics,
         dspy_serialized=dspy_serialized,
         k_window_size=k_window_size,
