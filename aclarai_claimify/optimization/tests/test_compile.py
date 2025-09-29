@@ -4,14 +4,18 @@ import sys
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, PropertyMock
+import json
 import pytest
 
 # Add the project root to sys.path so we can import the modules
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from aclarai_claimify.data_models import ClaimifyConfig, OptimizationConfig
+from aclarai_claimify.optimization.artifacts import ValidationMetrics
 from aclarai_claimify.optimization.compile import (
+    _adapt_metric_for_gepa,
     _initialize_models,
     _run_optimizer,
     _evaluate_program,
@@ -23,6 +27,7 @@ from aclarai_claimify.optimization.compile import (
     OptimizationError,
     DataValidationError,
 )
+from aclarai_claimify.optimization.components import _score_decomposition_output
 
 
 class TestModelInitialization:
@@ -247,6 +252,22 @@ class TestOptimizer:
                 mock_teacher_lm,
                 optimizer_config,
             )
+
+
+def test_adapt_metric_for_gepa_adds_missing_arguments():
+    """Legacy metrics should ignore GEPA-only arguments."""
+
+    captured = {}
+
+    def legacy_metric(gold, pred, trace=None):
+        captured["args"] = (gold, pred, trace)
+        return 0.5
+
+    wrapped = _adapt_metric_for_gepa(legacy_metric)
+    score = wrapped("gold", "pred", "trace", "predictor", ["trace"])
+
+    assert score == 0.5
+    assert captured["args"] == ("gold", "pred", "trace")
 
 
 class TestEvaluation:
@@ -564,12 +585,15 @@ class TestCompileComponent:
         mock_validate_examples.assert_called_once()
         mock_split.assert_called_once()
         mock_init_models.assert_called_once()
-        mock_build.assert_called_once()
+        mock_build.assert_called_once_with(mock_signature, style='cot')
         mock_optimize.assert_called_once()
         mock_evaluate.assert_called_once()
         mock_extract_shots.assert_called_once()
         mock_extract_prompt.assert_called_once()
         mock_create.assert_called_once()
+        create_kwargs = mock_create.call_args.kwargs
+        assert create_kwargs.get('program_style') == 'cot'
+        assert create_kwargs.get('dspy_serialized') is None
         mock_save.assert_called_once_with(
             {"test": "artifact"}, Path("/tmp/output.json")
         )
@@ -579,6 +603,207 @@ class TestCompileComponent:
             os.remove("/tmp/test_config.yaml")
         except:
             pass
+
+
+class DummyExample:
+    def inputs(self):
+        return {"dummy": "value"}
+
+    def labels(self):
+        return {}
+
+
+class DummyProgram:
+    def __init__(self, instructions: str):
+        predictor = SimpleNamespace(
+            instructions=None,
+            system_prompt=None,
+            signature=SimpleNamespace(instructions=instructions),
+        )
+        self.predictors = [predictor]
+
+
+def _mock_compile_environment(prompt: str, optimizer_name: str, tmp_path, log_dir_base=None, uuid_value="abcdef1234567890"):
+    dummy_program = DummyProgram(prompt)
+    captured = {}
+
+    def fake_run_optimizer(program, trainset, valset, metric, teacher_lm, optimizer_dict, verbose):
+        captured["optimizer_dict"] = optimizer_dict
+        captured["trainset_len"] = len(trainset)
+        return dummy_program
+
+    dataset_records = [
+        {
+            "context_text": "ctx",
+            "target_sentence": "sentence",
+            "selection_response_json": "{}",
+        }
+        for _ in range(5)
+    ]
+    examples = [DummyExample() for _ in range(5)]
+
+    params = {"max_bootstrapped_demos": 8}
+    if optimizer_name == "gepa":
+        params = {"auto": "medium"}
+        if log_dir_base is not None:
+            params["log_dir"] = str(log_dir_base)
+
+    with patch(
+        "aclarai_claimify.optimization.compile.get_component_info",
+        return_value={
+            "signature": MagicMock(),
+            "signature_name": "SelectionSignature",
+            "metric": MagicMock(return_value=1.0),
+        },
+    ), patch(
+        "aclarai_claimify.optimization.compile.load_jsonl_dataset",
+        return_value=dataset_records,
+    ), patch(
+        "aclarai_claimify.optimization.compile.validate_records_for_component"
+    ), patch(
+        "aclarai_claimify.optimization.compile.map_to_examples",
+        return_value=examples,
+    ), patch(
+        "aclarai_claimify.optimization.compile.validate_component_examples"
+    ), patch(
+        "aclarai_claimify.optimization.compile._initialize_models",
+        return_value=(MagicMock(), MagicMock()),
+    ), patch(
+        "aclarai_claimify.optimization.compile.build_program",
+        return_value=MagicMock(),
+    ), patch(
+        "aclarai_claimify.optimization.compile._run_optimizer",
+        side_effect=fake_run_optimizer,
+    ), patch(
+        "aclarai_claimify.optimization.compile._evaluate_program",
+        return_value=ValidationMetrics(
+            metric_name="selection_metric",
+            score=0.9,
+            n_val=1,
+            per_example_diagnostics=[],
+        ),
+    ), patch(
+        "aclarai_claimify.optimization.compile._extract_few_shots",
+        return_value=[],
+    ), patch("uuid.uuid4", return_value=SimpleNamespace(hex=uuid_value)):
+        artifact_path = tmp_path / f"artifact_{optimizer_name}.json"
+        optimization_config = OptimizationConfig(
+            optimizer_name=optimizer_name,
+            params=params,
+        )
+
+        compile_component(
+            component="selection",
+            train_path=tmp_path / "train.jsonl",
+            student_model="student",
+            teacher_model="teacher",
+            output_path=artifact_path,
+            claimify_config=ClaimifyConfig(),
+            optimizer_config=optimization_config,
+        )
+
+        data = json.loads(artifact_path.read_text())
+        return data, captured
+
+
+def test_compile_component_gepa_sets_system_prompt(tmp_path):
+    prompt = "GEPA prompt"
+    data, _ = _mock_compile_environment(prompt, "gepa", tmp_path)
+    assert data["system_prompt"] == prompt
+
+
+def test_compile_component_bootstrap_sets_system_prompt(tmp_path):
+    prompt = "Bootstrap prompt"
+    data, _ = _mock_compile_environment(prompt, "bootstrap-fewshot", tmp_path)
+    assert data["system_prompt"] == prompt
+
+
+def test_compile_component_gepa_passes_log_dir(tmp_path):
+    prompt = "GEPA prompt"
+    base_dir = tmp_path / "logs"
+    uuid_value = "1234567890abcdef"
+    data, captured = _mock_compile_environment(
+        prompt,
+        "gepa",
+        tmp_path,
+        log_dir_base=base_dir,
+        uuid_value=uuid_value,
+    )
+    assert data["system_prompt"] == prompt
+    expected_log_dir = base_dir / f"{uuid_value}_log"
+    assert expected_log_dir.exists()
+    assert captured["optimizer_dict"]["params"]["log_dir"] == str(expected_log_dir)
+    assert data["optimizer_params"]["other_params"]["log_dir"] == str(expected_log_dir)
+
+
+class TestDecompositionMetric:
+    """Targeted tests that ensure partial-credit scoring for decomposition output."""
+
+    @staticmethod
+    def _make_example() -> SimpleNamespace:
+        gold_payload = {
+            "claim_candidates": [
+                {
+                    "text": "Alice built a 3D printer.",
+                    "is_atomic": True,
+                    "is_self_contained": True,
+                    "is_verifiable": True,
+                    "passes_criteria": True,
+                    "confidence": 0.9,
+                    "reasoning": "Single factual statement about Alice's action.",
+                    "node_type": "Claim",
+                }
+            ]
+        }
+        return SimpleNamespace(
+            disambiguated_text="Alice built a 3D printer.",
+            decomposition_response_json=json.dumps(gold_payload),
+        )
+
+    def test_metric_returns_full_score_for_exact_match(self):
+        example = self._make_example()
+        prediction = SimpleNamespace(
+            decomposition_response_json=example.decomposition_response_json
+        )
+
+        score, feedback = _score_decomposition_output(example, prediction)
+
+        assert score == pytest.approx(1.0)
+        assert "Claim overlap F1" in feedback
+
+    def test_metric_applies_weighted_penalty_instead_of_zero(self):
+        example = self._make_example()
+        penalized_payload = json.loads(example.decomposition_response_json)
+        penalized_payload["claim_candidates"][0].update(
+            {
+                "text": "Alice built a 3D printer.",
+                "reasoning": "Too short.",
+            }
+        )
+        prediction = SimpleNamespace(
+            decomposition_response_json=json.dumps(penalized_payload)
+        )
+
+        score, feedback = _score_decomposition_output(example, prediction)
+
+        assert 0 < score < 1
+        assert "Penalty factor" in feedback
+        assert "Reasoning too short" in feedback
+
+    def test_metric_handles_legacy_claims_key_with_penalty(self):
+        example = self._make_example()
+        legacy_payload = json.loads(example.decomposition_response_json)
+        payload = {
+            "claims": legacy_payload["claim_candidates"],
+        }
+        prediction = SimpleNamespace(
+            decomposition_response_json=json.dumps(payload)
+        )
+
+        score, feedback = _score_decomposition_output(example, prediction)
+
+        assert 0 < score < 1
+        assert "nonstandard key 'claims'" in feedback
 
     @patch("aclarai_claimify.optimization.compile.get_component_info")
     def test_compile_component_data_validation_error(self, mock_get_component):

@@ -10,8 +10,6 @@ dependencies = [
     "pydantic>=2.0.0",
     "pyyaml",
     "dspy-ai",
-    "textual-dev[scout]>=1.7.0",
-    "darkdetect[scout]>=0.8.0",
 ]
 
 [project.optional-dependencies]
@@ -25,39 +23,12 @@ optimization = [
     "tqdm>=4.65.0",
     "sentence-transformers",
     "faiss-cpu",
+    "aiohttp>=3.12.15",
+    "json-repair>=0.44.1",
 ]
-# Dependencies for the scout agent
-scout = [
-    "langgraph",
-    "langgraph-checkpoint-sqlite",
-    "langchain-community",
-    "langchain-litellm",
-    "langchain-tavily",
-    "langchain-google-community",
-    "langsmith",
-    "litellm",
-    "requests",
-    "html5lib",
-    "httpx",
-    "attachments",
-    "beautifulsoup4",
-    "google-api-python-client",
-    "google-search-results",
-    "arxiv",
-    "wikipedia",
-    "json-repair",
-    # TUI dependencies for datascout_tui.py
-    "textual>=0.48.0",
-    "typer>=0.9.0",
-    "darkdetect>=0.8.0",
-    "pydantic",
-]
-# Optional dependency for the scout agent's crawler tool, requires playwright is installed on the system
-crawler = ["libcrawler"]
 
 [project.scripts]
 aclarai-claimify = "aclarai_claimify.cli:main"
-aclarai-claimify-scout = "aclarai_claimify.scout.main:main"
 
 [tool.setuptools]
 packages = [
@@ -67,10 +38,21 @@ packages = [
     "aclarai_claimify.optimization",
     "aclarai_claimify.optimization.tests",
     "aclarai_claimify.prompts",
-    "aclarai_claimify.scout",
     "aclarai_claimify.settings",
     "aclarai_claimify.utils",
 ]
 [tool.setuptools.package-data]
 "aclarai_claimify.settings" = ["*.yaml"]
 "aclarai_claimify" = ["../docs/*.md"]
+
+[dependency-groups]
+optimization = [
+    "litellm>=1.76.1",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*SwigPyPacked.*:DeprecationWarning",
+    "ignore:.*SwigPyObject.*:DeprecationWarning",
+    "ignore:.*swigvarlink.*:DeprecationWarning",
+]

@@ -157,6 +157,14 @@ aclarai-claimify compile \
     --output-path ./custom_prompts/my_compiled_decomposition.json
 ```
 
+#### GEPA concurrency
+
+GEPA supports batched evaluation through its `num_threads` parameter. Setting `num_threads` greater than one in your optimizer YAML will run student model evaluations in parallel, so ensure your rate limits and API quotas can absorb the additional simultaneous calls.
+
+#### GEPA logging
+
+Add `log_dir` to your GEPA optimizer params to persist the optimizer’s artifacts. Each run creates a unique subdirectory under that base (e.g., `logs/<uuid>_log/`), and the CLI prints the exact path when verbose output is enabled.
+
 ### Step 3: Use Your Compiled Prompt
 
 Now, simply point the component to your newly created artifact during initialization. It will load your custom-tuned prompt instead of the library's default.
@@ -194,7 +202,7 @@ Use the built-in CLI to generate a structured dataset for a specific component:
 
 ```bash
 aclarai-claimify generate-dataset \
-    --input-file ./my_raw_sentences.txt \
+    --input-path ./my_raw_sentences.txt \
     --output-file ./my_decomposition_dataset.jsonl \
     --component decomposition \
     --teacher-model gpt-4o
@@ -202,14 +210,46 @@ aclarai-claimify generate-dataset \
 # For components that use context (selection, disambiguation), you can
 # control the context window size with the --k-window-size flag.
 aclarai-claimify generate-dataset \
-    --input-file ./my_raw_sentences.txt \
+    --input-path ./my_raw_sentences.txt \
     --output-file ./my_selection_dataset.jsonl \
     --component selection \
     --teacher-model gpt-4o \
     --k-window-size 3 # Use 3 sentences before and 3 after
+
+# When working from curated JSON prospects, enable parallel processing.
+aclarai-claimify generate-dataset \
+    --input-path ./examples/data/prospects/selection \
+    --output-file ./my_selection_dataset.jsonl \
+    --component selection \
+    --teacher-model gpt-4o \
+    --curated \
+    --concurrency 8
+
+# Curated disambiguation/decomposition runs can also request labelled negatives.
+aclarai-claimify generate-dataset \
+    --input-path ./examples/data/prospects/disambiguation \
+    --output-file ./my_disambiguation_dataset.jsonl \
+    --component disambiguation \
+    --teacher-model gpt-4o \
+    --curated \
+    --include-negatives \
+    --negative-quota 1
 ```
 
 ⚠️ **Warning**: This operation may incur costs depending on your API provider and usage!
+
+#### Helpful Flags
+
+- `--curated`: tells the generator that the input directory contains curated JSON files
+  (each file may hold positive/negative examples). Files without usable entries are
+  skipped automatically.
+- `--clean-markdown`: strips markdown formatting when reading `.md` sources.
+- `--concurrency`: caps simultaneous teacher-model calls; increase cautiously to stay
+  within provider rate limits.
+- `--include-negatives`: (disambiguation & decomposition) synthesize negative samples labelled
+  by failure mode using curated prospects.
+- `--negative-quota`: enforce a minimum count per failure mode when generating negatives; the
+  command aborts if coverage is incomplete.
 
 ### Step 3: Review and Refine
 

@@ -4,13 +4,13 @@ This module provides the main compilation pipeline that orchestrates
 the entire process of optimizing Claimify components using DSPy.
 """
 
-import os
+import inspect
+import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 
 try:
     import dspy
-    import yaml
 except ImportError as e:
     missing = "yaml" if "yaml" in str(e) else "dspy"
     raise ImportError(
@@ -55,7 +55,68 @@ class OptimizationError(Exception):
     pass
 
 
+def _adapt_metric_for_gepa(metric: Callable) -> Callable:
+    """Wrap legacy metrics so they satisfy GEPA's signature requirements."""
 
+    signature = inspect.signature(metric)
+    param_count = len(signature.parameters)
+    gepa_helper = getattr(metric, "gepa_feedback", None)
+
+    if param_count >= 5:
+        return metric
+
+    def _preserve_metadata(wrapper):
+        wrapper.__name__ = getattr(metric, "__name__", wrapper.__name__)
+        wrapper.__doc__ = getattr(metric, "__doc__", wrapper.__doc__)
+        wrapper.__module__ = getattr(metric, "__module__", wrapper.__module__)
+        return wrapper
+
+    if param_count <= 2:
+
+        if gepa_helper is not None:
+
+            def _wrapped(gold, pred, trace=None, pred_name=None, pred_trace=None):
+                score, feedback = gepa_helper(gold, pred)
+                return {"score": score, "feedback": feedback}
+
+            return _preserve_metadata(_wrapped)
+
+        def _wrapped(gold, pred, trace=None, pred_name=None, pred_trace=None):
+            return metric(gold, pred)
+
+        return _preserve_metadata(_wrapped)
+
+    if param_count == 3:
+
+        if gepa_helper is not None:
+
+            def _wrapped(gold, pred, trace=None, pred_name=None, pred_trace=None):
+                score, feedback = gepa_helper(gold, pred, trace)
+                return {"score": score, "feedback": feedback}
+
+            return _preserve_metadata(_wrapped)
+
+        def _wrapped(gold, pred, trace=None, pred_name=None, pred_trace=None):
+            return metric(gold, pred, trace)
+
+        return _preserve_metadata(_wrapped)
+
+    if param_count == 4:
+
+        if gepa_helper is not None:
+
+            def _wrapped(gold, pred, trace=None, pred_name=None, pred_trace=None):
+                score, feedback = gepa_helper(gold, pred, trace)
+                return {"score": score, "feedback": feedback}
+
+            return _preserve_metadata(_wrapped)
+
+        def _wrapped(gold, pred, trace=None, pred_name=None, pred_trace=None):
+            return metric(gold, pred, trace, pred_name)
+
+        return _preserve_metadata(_wrapped)
+
+    return metric
 
 
 def _initialize_models(
@@ -79,12 +140,23 @@ def _initialize_models(
         ModelConfigError: If model configuration fails
         DSPyVersionError: If DSPy version is incompatible
     """
-    
 
     try:
+        # Prepare student model config
+        student_config = model_params.copy() if model_params else {}
+        if "openai/" in student_model:
+            student_config.setdefault("temperature", 1.0)
+            student_config.setdefault("max_tokens", 16000)  # Safe minimum for student
+
+        # Prepare teacher model config
+        teacher_config = model_params.copy() if model_params else {}
+        if "openai/" in teacher_model:
+            teacher_config.setdefault("temperature", 1.0)
+            teacher_config.setdefault("max_tokens", 32000)  # Larger value for teacher
+
         # Use the new DSPy API (dspy-ai>=2.4.0)
-        student_lm = dspy.LM(student_model, **(model_params or {}))
-        teacher_lm = dspy.LM(teacher_model, **(model_params or {}))
+        student_lm = dspy.LM(student_model, **student_config)
+        teacher_lm = dspy.LM(teacher_model, **teacher_config)
         if verbose:
             print("   ✅ Using dspy.LM API")
 
@@ -142,7 +214,7 @@ def _run_optimizer(
         # Map of supported optimizers
         optimizer_classes = {
             "bootstrap-fewshot": dspy.teleprompt.BootstrapFewShot,
-            # Add more optimizers here as needed
+            "gepa": dspy.teleprompt.gepa.GEPA,
         }
 
         if optimizer_name not in optimizer_classes:
@@ -152,7 +224,30 @@ def _run_optimizer(
 
         # Add metric to params
         optimizer_params = params.copy()
-        optimizer_params["metric"] = metric
+        optimizer_metric = metric
+
+        if optimizer_name == "gepa":
+            optimizer_metric = _adapt_metric_for_gepa(metric)
+            # Allow configs to specify a separate model for reflection, otherwise fall back to teacher LM
+            reflection_model = optimizer_params.pop("reflection_model", None)
+            reflection_model_params = optimizer_params.pop(
+                "reflection_model_params", {}
+            )
+
+            if reflection_model:
+                optimizer_params["reflection_lm"] = dspy.LM(
+                    reflection_model, **reflection_model_params
+                )
+            else:
+                reflection_lm = optimizer_params.get("reflection_lm")
+                if reflection_lm in (None, "teacher"):
+                    if teacher_lm is None:
+                        raise OptimizationError(
+                            "GEPA requires either a reflection_model in the config or a teacher model to use for reflection."
+                    )
+                    optimizer_params["reflection_lm"] = teacher_lm
+
+        optimizer_params["metric"] = optimizer_metric
 
         # Try to initialize optimizer with teacher model
         try:
@@ -168,7 +263,11 @@ def _run_optimizer(
         if verbose:
             print("   ⏳ Compiling program (this may take a while)...")
 
-        compiled_program = optimizer.compile(program, trainset=trainset)
+        compile_kwargs = {"trainset": trainset}
+        if optimizer_name == "gepa" and valset:
+            compile_kwargs["valset"] = valset
+
+        compiled_program = optimizer.compile(program, **compile_kwargs)
 
         if verbose:
             print("   ✅ Optimization completed successfully")
@@ -323,10 +422,15 @@ def _extract_system_prompt(program: dspy.Module) -> Optional[str]:
             return program.system_prompt
         elif hasattr(program, "predictors"):
             for predictor in program.predictors:
-                if hasattr(predictor, "instructions"):
+                if hasattr(predictor, "instructions") and predictor.instructions:
                     return predictor.instructions
-                elif hasattr(predictor, "system_prompt"):
+                if hasattr(predictor, "system_prompt") and predictor.system_prompt:
                     return predictor.system_prompt
+                signature = getattr(predictor, "signature", None)
+                if signature is not None:
+                    instructions = getattr(signature, "instructions", None)
+                    if instructions:
+                        return instructions
     except Exception:
         pass
 
@@ -345,6 +449,7 @@ def compile_component(
     verbose: bool = True,
     model_params: Optional[Dict[str, Any]] = None,
     k_window_size: Optional[int] = None,
+    program_style: str = "cot",
 ) -> None:
     """Compile a Claimify component using DSPy optimization.
 
@@ -362,6 +467,7 @@ def compile_component(
         verbose: Whether to print detailed output
         model_params: Additional model parameters to pass to LiteLLM
         k_window_size: Context window size used for the trainset
+        program_style: DSPy program style to use when building the module (cot or predict)
     """
 
     if verbose:
@@ -390,6 +496,8 @@ def compile_component(
         if verbose:
             print(f"   ✅ Loaded {len(examples)} examples")
 
+        signature_instructions = getattr(signature, "instructions", None)
+
         # 3. Split into train/val
         if verbose:
             print("🔀 Splitting dataset...")
@@ -411,16 +519,35 @@ def compile_component(
         # 6. Build program
         if verbose:
             print("🏗️  Building program...")
-        program = build_program(signature, style="cot")
+            print(f"   Program style: {program_style}")
+        program = build_program(signature, style=program_style)
 
         # 7. Run optimization
+        optimizer_dict = optimizer_config.model_dump()
+        params_copy = optimizer_dict.get("params", {}).copy()
+
+        log_dir_path: Optional[Path] = None
+        if (
+            optimizer_config.optimizer_name == "gepa"
+            and params_copy.get("log_dir")
+        ):
+            requested_dir = Path(params_copy["log_dir"])
+            requested_dir.mkdir(parents=True, exist_ok=True)
+            log_dir_path = requested_dir / f"{uuid.uuid4().hex}_log"
+            log_dir_path.mkdir(parents=True, exist_ok=True)
+            params_copy["log_dir"] = str(log_dir_path)
+            if verbose:
+                print(f"🗂️  Optimizer logs: {log_dir_path}")
+
+        optimizer_dict["params"] = params_copy
+
         compiled_program = _run_optimizer(
             program,
             trainset,
             valset,
             metric,
             teacher_lm,
-            optimizer_config.dict(),
+            optimizer_dict,
             verbose,
         )
 
@@ -434,6 +561,8 @@ def compile_component(
             print("🔍 Extracting program artifacts...")
         few_shots = _extract_few_shots(compiled_program, component)
         system_prompt = _extract_system_prompt(compiled_program)
+        if not system_prompt and signature_instructions:
+            system_prompt = signature_instructions
 
         if verbose:
             print(f"   📝 Extracted {len(few_shots)} few-shot examples")
@@ -443,11 +572,15 @@ def compile_component(
             print("💾 Creating artifact...")
 
         # Create optimizer params for artifact
+        artifact_params = params_copy
+
         optimizer_params = OptimizerParams(
             optimizer_name=optimizer_config.optimizer_name,
             seed=seed,
-            other_params=optimizer_config.params,
+            other_params=artifact_params,
         )
+
+        dspy_serialized: Optional[Dict[str, Any]] = None
 
         artifact = create_artifact_dict(
             component=component,
@@ -457,7 +590,9 @@ def compile_component(
             optimizer_params=optimizer_params,
             few_shots=few_shots,
             system_prompt=system_prompt,
+            program_style=program_style,
             validation_metrics=validation_metrics,
+            dspy_serialized=dspy_serialized,
             k_window_size=k_window_size,
         )
 

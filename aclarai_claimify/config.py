@@ -102,8 +102,15 @@ def load_claimify_config(
         except Exception as e:
             logger.error(f"Failed to load override config from {override_path}: {e}")
 
-    # 3. Deep merge configs
-    merged_config_data = deep_merge(base_config_data, override_config_data)
+    # 3. Merge configs. If the override switches optimizers, use the override wholesale to avoid
+    # leaking legacy parameters from the default configuration.
+    if (
+        override_config_data.get("optimizer_name")
+        and override_config_data.get("optimizer_name") != base_config_data.get("optimizer_name")
+    ):
+        merged_config_data = override_config_data
+    else:
+        merged_config_data = deep_merge(base_config_data, override_config_data)
 
     # 4. Validate and return Pydantic model
     config = _parse_claimify_config_data(merged_config_data)
@@ -147,8 +154,15 @@ def load_optimization_config(
                 f"Failed to load override optimization config from {override_path}: {e}"
             )
 
-    # 3. Deep merge configs
-    merged_config_data = deep_merge(base_config_data, override_config_data)
+    # 3. Combine configs. If the override switches optimizers, honor the override as-is to avoid
+    # leaking parameters that belong to the default optimizer into the custom configuration.
+    if (
+        override_config_data.get("optimizer_name")
+        and override_config_data.get("optimizer_name") != base_config_data.get("optimizer_name")
+    ):
+        merged_config_data = override_config_data
+    else:
+        merged_config_data = deep_merge(base_config_data, override_config_data)
 
     # 4. Validate and return Pydantic model
     try:
