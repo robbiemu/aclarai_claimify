@@ -12,6 +12,7 @@ Usage:
     - Run with stdin:
       cat <path_to_input_file> | python examples/langgraph_runtime.py
 """
+
 import argparse
 import dspy
 import json
@@ -61,7 +62,9 @@ def decomposition_node(state: ClaimifyState) -> Dict[str, Any]:
         print(f"Extracted {len(updated_state.final_claims)} claims.")
     return {"decomposition_result": updated_state.decomposition_result}
 
+
 # --- Conditional Edge ---
+
 
 def should_continue(state: ClaimifyState) -> Literal["continue", "end"]:
     """Determines the next step after the selection node based on its output."""
@@ -71,14 +74,18 @@ def should_continue(state: ClaimifyState) -> Literal["continue", "end"]:
     else:
         return "end"
 
+
 # --- Utility Functions ---
+
 
 def split_into_sentences(text: str) -> list[str]:
     """Splits a text into sentences using a simple regex."""
-    sentences = re.split(r'(?<=[.!?])\s+|\n+', text)
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
     return [s.strip() for s in sentences if s.strip()]
 
+
 # --- Main Execution ---
+
 
 def main():
     """Assemble the graph and process input from a file or stdin."""
@@ -95,13 +102,13 @@ def main():
     )
     parser.add_argument(
         "--model",
-        default="gpt-3.5-turbo",
-        help="DSPy model to use (e.g., 'gpt-3.5-turbo', 'ollama/gemma:2b')."
+        default="gpt-5",
+        help="DSPy model to use (e.g., 'gpt-5', 'ollama/gemma:2b').",
     )
     parser.add_argument(
         "--model-params",
         type=str,
-        default='{}',
+        default="{}",
         help='JSON string with additional model parameters (e.g., \'{"api_key": "...", "base_url": "..."}\')',
     )
     args = parser.parse_args()
@@ -114,7 +121,9 @@ def main():
         print(f"DSPy LM configured successfully with model: {args.model}")
     except Exception as e:
         print(f"Failed to configure DSPy LLM. Error: {e}")
-        print("Please ensure your model parameters (e.g., API keys, base URLs) are correct.")
+        print(
+            "Please ensure your model parameters (e.g., API keys, base URLs) are correct."
+        )
         return
 
     # 2. Define the Graph
@@ -137,7 +146,7 @@ def main():
     # 3. Read and process input
     if args.input_file:
         print(f"Reading from file: {args.input_file}")
-        with open(args.input_file, 'r') as f:
+        with open(args.input_file, "r") as f:
             text_content = f.read()
         source_id = args.input_file
     else:
@@ -151,7 +160,7 @@ def main():
 
     # 4. Loop through sentences and run the graph
     for i, sentence_text in enumerate(sentences):
-        print(f"\n--- Processing sentence {i+1}/{len(sentences)} ---")
+        print(f"\n--- Processing sentence {i + 1}/{len(sentences)} ---")
         print(f"Text: {sentence_text}")
 
         sentence = SentenceChunk(
@@ -167,19 +176,24 @@ def main():
         # The `invoke` method returns the final state object.
         final_state = app.invoke(initial_state)
 
-        if final_state.final_claims:
-            for claim in final_state.final_claims:
+        decomp_result = final_state.get("decomposition_result")
+        final_claims = decomp_result.valid_claims if decomp_result else []
+        if final_claims:
+            for claim in final_claims:
                 all_claims.append(claim.text)
 
     # 5. Output results
     output_content = "\n".join(all_claims)
     if args.output_file:
-        with open(args.output_file, 'w') as f:
+        with open(args.output_file, "w") as f:
             f.write(output_content)
-        print(f"\n--- Processing complete. {len(all_claims)} claims extracted to {args.output_file} ---")
+        print(
+            f"\n--- Processing complete. {len(all_claims)} claims extracted to {args.output_file} ---"
+        )
     else:
         print("\n--- Extracted Claims ---")
         print(output_content)
+
 
 if __name__ == "__main__":
     main()
