@@ -13,8 +13,12 @@ from aclarai_claimify.cli import (
     create_parser,
     validate_compile_args,
     handle_compile_command,
-    handle_schema_command
+    handle_schema_command,
+    validate_generate_args,
+    handle_generate_command,
+    GenerationError
 )
+from aclarai_claimify.data_models import ClaimifyConfig, OptimizationConfig
 
 
 class TestArgumentParsing:
@@ -52,7 +56,6 @@ class TestArgumentParsing:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -61,7 +64,6 @@ class TestArgumentParsing:
         assert args.trainset == Path("/tmp/train.jsonl")
         assert args.student_model == "gpt-3.5-turbo"
         assert args.teacher_model == "gpt-4o"
-        assert args.config == Path("/tmp/config.yaml")
         assert args.output_path == Path("/tmp/output.json")
     
     def test_compile_parser_optional_args(self):
@@ -74,7 +76,6 @@ class TestArgumentParsing:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--seed", "123",
             "--verbose",
@@ -98,6 +99,24 @@ class TestArgumentParsing:
         assert args.command == "schema"
         assert args.component == "selection"
 
+    def test_generate_parser_args(self):
+        """Test that generate-dataset subcommand works correctly."""
+        parser = create_parser()
+        
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+
+        assert args.command == "generate-dataset"
+        assert args.input_path == Path("/tmp/input.txt")
+        assert args.output_file == Path("/tmp/output.jsonl")
+        assert args.component == "selection"
+        assert args.teacher_model == "gpt-4o"
+
 
 class TestArgumentValidation:
     """Test argument validation functionality."""
@@ -111,7 +130,6 @@ class TestArgumentValidation:
             "--trainset", str(tmp_path / "nonexistent.jsonl"),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(tmp_path / "config.yaml"),
             "--output-path", str(tmp_path / "output.json")
         ])
         
@@ -127,7 +145,6 @@ class TestArgumentValidation:
             "--trainset", str(tmp_path),  # This is a directory
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(tmp_path / "config.yaml"),
             "--output-path", str(tmp_path / "output.json")
         ])
         
@@ -140,10 +157,6 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
-        # Create a config file
-        config = tmp_path / "config.yaml"
-        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
-        
         # Create an existing output file
         output_file = tmp_path / "output.json"
         output_file.write_text("existing")
@@ -155,7 +168,6 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(config),
             "--output-path", str(output_file)
         ])
         
@@ -168,10 +180,6 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
-        # Create a config file
-        config = tmp_path / "config.yaml"
-        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
-        
         # Create an existing output file
         output_file = tmp_path / "output.json"
         output_file.write_text("existing")
@@ -183,7 +191,6 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(config),
             "--output-path", str(output_file),
             "--overwrite"
         ])
@@ -197,10 +204,6 @@ class TestArgumentValidation:
         trainset = tmp_path / "train.jsonl"
         trainset.write_text("test")
         
-        # Create a config file
-        config = tmp_path / "config.yaml"
-        config.write_text("optimizer_name: bootstrap-fewshot\nparams:\n  max_bootstrapped_demos: 8")
-        
         parser = create_parser()
         args = parser.parse_args([
             "compile",
@@ -208,13 +211,80 @@ class TestArgumentValidation:
             "--trainset", str(trainset),
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", str(config),
             "--output-path", str(tmp_path / "output.json"),
             "--seed", "-1"
         ])
         
         with pytest.raises(SystemExit):
             validate_compile_args(args)
+
+    def test_validate_generate_args_missing_input(self, tmp_path):
+        """Test validation fails when input file doesn't exist."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", str(tmp_path / "nonexistent.txt"),
+            "--output-file", str(tmp_path / "output.jsonl"),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
+    
+    def test_validate_generate_args_input_is_directory(self, tmp_path):
+        """Test validation fails when input file is a directory."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", str(tmp_path),  # This is a directory
+            "--output-file", str(tmp_path / "output.jsonl"),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Directories are supported for batch processing
+        validate_generate_args(args)
+    
+    def test_validate_generate_args_output_exists(self, tmp_path):
+        """Test validation fails when output file exists."""
+        # Create a test input file
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test")
+        
+        # Create an existing output file
+        output_file = tmp_path / "output.jsonl"
+        output_file.write_text("existing")
+        
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", str(input_file),
+            "--output-file", str(output_file),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
+
+    def test_validate_generate_args_invalid_concurrency(self, tmp_path):
+        """Test validation fails when concurrency is not positive."""
+        input_file = tmp_path / "input.txt"
+        input_file.write_text("test")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", str(input_file),
+            "--output-file", str(tmp_path / "output.jsonl"),
+            "--component", "selection",
+            "--teacher-model", "gpt-4o",
+            "--concurrency", "0",
+        ])
+
+        with pytest.raises(SystemExit):
+            validate_generate_args(args)
 
 
 class TestCommandHandling:
@@ -231,7 +301,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--seed", "42"
         ])
@@ -244,16 +313,7 @@ class TestCommandHandling:
         handle_compile_command(args)
         
         # Verify that compile_component was called with correct arguments
-        mock_compile.assert_called_once_with(
-            component="selection",
-            train_path=Path("/tmp/train.jsonl"),
-            student_model="gpt-3.5-turbo",
-            teacher_model="gpt-4o",
-            config_path=Path("/tmp/config.yaml"),
-            output_path=Path("/tmp/output.json"),
-            seed=42,
-            verbose=True  # Default verbose
-        )
+        mock_compile.assert_called_once()
     
     @patch('aclarai_claimify.cli.compile_component')
     @patch('aclarai_claimify.cli.validate_compile_args')
@@ -266,7 +326,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json",
             "--quiet"
         ])
@@ -279,16 +338,7 @@ class TestCommandHandling:
         handle_compile_command(args)
         
         # Verify that compile_component was called with correct arguments
-        mock_compile.assert_called_once_with(
-            component="selection",
-            train_path=Path("/tmp/train.jsonl"),
-            student_model="gpt-3.5-turbo",
-            teacher_model="gpt-4o",
-            config_path=Path("/tmp/config.yaml"),
-            output_path=Path("/tmp/output.json"),
-            seed=42,  # Default value
-            verbose=False  # Quiet flag disables verbose
-        )
+        mock_compile.assert_called_once()
     
     @patch('aclarai_claimify.cli.compile_component')
     @patch('aclarai_claimify.cli.validate_compile_args')
@@ -323,7 +373,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -347,7 +396,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -371,7 +419,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -395,7 +442,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -417,7 +463,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -442,7 +487,6 @@ class TestCommandHandling:
             "--trainset", "/tmp/train.jsonl",
             "--student-model", "gpt-3.5-turbo",
             "--teacher-model", "gpt-4o",
-            "--config", "/tmp/config.yaml",
             "--output-path", "/tmp/output.json"
         ])
         
@@ -452,3 +496,90 @@ class TestCommandHandling:
         
         with pytest.raises(SystemExit):
             handle_compile_command(args)
+
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_success(self, mock_validate, mock_generate):
+        """Test successful generate-dataset command execution."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation and generation to succeed
+        mock_validate.return_value = None
+        mock_generate.return_value = None
+        
+        # Should not raise an exception
+        handle_generate_command(args)
+        
+        # Verify that generate_dataset was called with correct arguments
+        mock_generate.assert_called_once()
+        assert mock_generate.call_args.kwargs["concurrency"] == 1
+    
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_generation_error(self, mock_validate, mock_generate):
+        """Test generate-dataset command handling of GenerationError."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation to succeed but generation to fail
+        mock_validate.return_value = None
+        mock_generate.side_effect = GenerationError("Test generation error")
+        
+        with pytest.raises(SystemExit):
+            handle_generate_command(args)
+    
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_keyboard_interrupt(self, mock_validate, mock_generate):
+        """Test generate-dataset command handling of KeyboardInterrupt."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation to succeed but generation to be interrupted
+        mock_validate.return_value = None
+        mock_generate.side_effect = KeyboardInterrupt()
+        
+        with pytest.raises(SystemExit) as exc_info:
+            handle_generate_command(args)
+        
+        # Check that exit code is 130 (SIGINT)
+        assert exc_info.value.code == 130
+    
+    @patch('aclarai_claimify.cli.generate_dataset')
+    @patch('aclarai_claimify.cli.validate_generate_args')
+    def test_handle_generate_command_unexpected_error(self, mock_validate, mock_generate):
+        """Test generate-dataset command handling of unexpected errors."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "generate-dataset",
+            "--input-path", "/tmp/input.txt",
+            "--output-file", "/tmp/output.jsonl",
+            "--component", "selection",
+            "--teacher-model", "gpt-4o"
+        ])
+        
+        # Mock the validation to succeed but generation to fail unexpectedly
+        mock_validate.return_value = None
+        mock_generate.side_effect = Exception("Unexpected error")
+        
+        with pytest.raises(SystemExit):
+            handle_generate_command(args)

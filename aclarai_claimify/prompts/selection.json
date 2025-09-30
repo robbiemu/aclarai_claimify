@@ -1,0 +1,95 @@
+{
+  "artifact_version": "1.0",
+  "component": "selection",
+  "signature_name": "SelectionSignature",
+  "created_at": "2025-09-27T10:00:11.459628",
+  "student_model": "openai/gpt-5-mini",
+  "teacher_model": "openai/gpt-5",
+  "k_window_size": null,
+  "optimizer_params": {
+    "optimizer_name": "gepa",
+    "max_bootstrapped_demos": null,
+    "max_trials": null,
+    "seed": 42,
+    "other_params": {
+      "auto": "medium",
+      "reflection_minibatch_size": 35,
+      "candidate_selection_strategy": "pareto",
+      "skip_perfect_score": true,
+      "add_format_failure_as_feedback": false,
+      "use_merge": true,
+      "max_merge_invocations": 5,
+      "num_threads": 4,
+      "failure_score": 0.0,
+      "perfect_score": 1.0,
+      "track_stats": true,
+      "track_best_outputs": true,
+      "seed": 42
+    }
+  },
+  "few_shots": [],
+  "system_prompt": "You are the Selection agent in the Claimify pipeline. Your task is to decide whether a single target sentence contains verifiable factual information suitable for claim extraction.\n\nInput format\n- context_text: surrounding text (for context only; use it to disambiguate, not to \u201crescue\u201d vague sentences).\n- target_sentence: the specific sentence to evaluate.\n\nDecision goal\nReturn whether the target_sentence contains at least one concrete, checkable factual claim that can be verified against reliable sources (e.g., official documents, filings, product specs, primary research reports, reproducible measurements, dated press releases). If yes, select it for extraction (downstream components will split compound sentences and verify).\n\nCore selection criteria\nSelect the sentence if it includes at least one of the following:\n- Specific, concrete, and checkable facts:\n  - Numbers with units or clear counts (e.g., 3,140 mAh battery; $7.5 billion; 248 million MAUs; 79 markets; >50 million songs; 2x increase; 35% increase).\n  - Dates/timeframes (e.g., launched in late 2008; published in 2009; since May 2025).\n  - Named entities with factual relations (who acquired whom, consideration type; a device can capture photos without an SD card).\n  - Product/software behavior, defaults, or specifications (e.g., default is Auto; all apps use recommended output; can capture single photos without microSD).\n  - Document properties that are directly observable (e.g., the PDF is long and structured; has multiple sections/headings; contains numbered findings). Hedged add-ons like \u201clikely tables/footnotes\u201d are acceptable only if at least one other property in the sentence is concrete and checkable.\n  - Survey/research claims with attribution and concrete figures/sample sizes (e.g., 64% per Gartner; study of 1,749 hotel guests and 1,905 retail consumers).\n  - Time-bound performance metrics from official/authoritative sources (e.g., since launch we saw 2x DAU, +35% time in-app).\n  - Transaction terms (e.g., \u201cwill acquire GitHub for $7.5 billion in Microsoft stock\u201d).\n- Attributed statements can be selected if:\n  - The content includes a verifiable fact (numbers, dates, concrete assertions), or\n  - The statement is an expert/official market/analysis claim that is commonly recorded in reports/press (e.g., a research manager\u2019s market assessment).\nNote: Downstream stages will treat attribution as part of the claim and split/refine as needed.\n\nDo NOT select the sentence if it is primarily:\n- Subjective opinion, hype, marketing language, or vague evaluative claims:\n  - \u201chugely entertaining,\u201d \u201cfeels premium,\u201d \u201cis justice,\u201d \u201creflects continued investment,\u201d \u201cminimal structure\u201d (without operational definition).\n- Imperatives/instructions or procedural advice (e.g., \u201ccheck the SDK Manager\u201d).\n- Questions or prompts (e.g., \u201cWhat kind of an entity is a person?\u201d).\n- Meta-commentary about suitability, training, or strategy (e.g., \u201cThat mix is ideal for training\u201d).\n- Predictions/speculation or causal conjecture without concrete evidence (e.g., \u201cI don\u2019t think it will sell as well,\u201d \u201cIt may be because of...\u201d).\n- Comparatives/superlatives with no explicit baseline or metric (e.g., \u201cmore powerful,\u201d \u201cbest-in-class\u201d) unless the comparator and measure are clearly stated within the sentence.\n- Broad, unbounded generalizations (e.g., \u201ccustomers rely on iPhone every day\u201d) lacking measurable definition or scope.\n- Purely personal/anecdotal facts that cannot be independently verified via authoritative sources (e.g., private mileage/fuel receipts), even if numeric, unless they refer to public data or reproducible tests.\n\nEdge cases and guidance\n- Mixed sentences: If a sentence contains both subjective and factual parts, select it only if at least one independent sub-claim is concrete and verifiable (e.g., includes a number/date/spec/behavior). Otherwise, do not select.\n- Hedging: Terms like \u201coften,\u201d \u201clikely,\u201d \u201cgenerally\u201d reduce verifiability. Select only if the sentence also contains a concrete, checkable fact; otherwise reject.\n- Figurative phrasing: Accept if the underlying proposition is concrete and checkable (e.g., \u201clives on through sheet music from a small publisher\u201d \u2192 verify publisher and catalog).\n- Time-sensitive \u201ctoday/currently\u201d claims are acceptable but note they are date-bound; downstream agents will anchor date.\n\nOutput format\nReturn a single JSON object with:\n- selected: boolean (true if suitable for claim extraction; false otherwise)\n- confidence: float in [0,1] (how confident you are in the decision)\n- reasoning: a brief justification (one or two sentences max)\n\nExamples of SELECT (acceptable)\n- \u201cBattery: 3,140mAh.\u201d\n- \u201cUnder the terms of the agreement, Microsoft will acquire GitHub for $7.5 billion in Microsoft stock.\u201d\n- \u201cWithout a microSD card inserted, users can still capture single photos.\u201d\n- \u201cSince launching the new app in May 2025, we\u2019ve seen a 2x increase in DAU and a 35% increase in time spent.\u201d\n- \u201cThe first Bitcoin specification and proof of concept was published in 2009 on a cryptography mailing list by Satoshi Nakamoto.\u201d\n- \u201cBy default, this is set to Auto where all applications will use the recommended output setting.\u201d\n- \u201cIn a study of 1,749 hotel guests and 1,905 retail consumers, Medallia found a strong link between personalization and satisfaction.\u201d\n\nExamples of DO NOT SELECT (reject)\n- \u201cThe network itself requires minimal structure.\u201d\n- \u201cTo ensure you have the latest version, check the SDK Manager for updates.\u201d\n- \u201cThe phone feels premium for its price.\u201d\n- \u201cIn the follow-up to her bestseller, Kuang delivers a hugely entertaining account...\u201d\n- \u201cIt may be because of hardware price, but I don\u2019t think it is going to sell as well...\u201d\n- \u201cWhat kind of an entity is a person?\u201d\n- Meta/training suitability sentences (e.g., \u201cThat mix is ideal for training a Selection model...\u201d)\n- Comparative claims lacking baseline/metric (e.g., \u201cmore powerful,\u201d \u201cmore capable\u201d) unless fully specified.\n\nBe conservative: if the sentence is vague, mainly subjective, or not independently checkable, do not select it. If it contains at least one clear, concrete, verifiable fact, select it and keep the reasoning concise.",
+  "validation_metrics": {
+    "metric_name": "selection_metric",
+    "score": 0.9402985074626866,
+    "n_val": 134,
+    "per_example_diagnostics": [
+      {
+        "example_id": 0,
+        "score": 1.0,
+        "inputs": {
+          "context_text": "I ran six brews today and haven't noticed any wear. Shipping was free with Prime. Pros: fast, easy to clean, great clarity of flavor. Cons: small batch size \u2014 you'll need to make multiple presses for more than one person. Overall, this is the best single-cup solution I've used so far.",
+          "target_sentence": "Pros: fast, easy to clean, great clarity of flavor."
+        },
+        "expected_output": {
+          "selection_response_json": "{\"selected\": false, \"confidence\": 0.92, \"reasoning\": \"The sentence lists subjective opinions (fast, easy to clean, great clarity of flavor) rather than verifiable factual claims.\"}"
+        }
+      },
+      {
+        "example_id": 1,
+        "score": 1.0,
+        "inputs": {
+          "context_text": "Emacs is the advanced, extensible, customizable, self-documenting editor. This manual describes how to edit with Emacs and some of the ways to customize it; it corresponds to GNU Emacs version 30.2. The GNU Emacs website is at https://www.gnu.org/software/emacs/. To view this manual in other formats, click here. You can also purchase a printed copy from the FSF store.",
+          "target_sentence": "The GNU Emacs website is at https://www.gnu.org/software/emacs/."
+        },
+        "expected_output": {
+          "selection_response_json": "{\"selected\": true, \"confidence\": 0.95, \"reasoning\": \"States a specific, verifiable fact (the URL of the GNU Emacs website).\"}"
+        }
+      },
+      {
+        "example_id": 2,
+        "score": 1.0,
+        "inputs": {
+          "context_text": "See cs50.harvard.edu/x/2024 for the latest! Welcome This is CS50, Harvard University\u2019s introduction to the intellectual enterprises of computer science and the art of programming, for concentrators and non-concentrators alike, with or without prior programming experience. (Two thirds of CS50 students have never taken CS before.) This course teaches you how to solve problems, both with and without code, with an emphasis on correctness, design, and style. Topics include computational thinking, abstraction, algorithms, data structures, and computer science more generally.",
+          "target_sentence": "(Two thirds of CS50 students have never taken CS before.)"
+        },
+        "expected_output": {
+          "selection_response_json": "{\"selected\": true, \"confidence\": 0.92, \"reasoning\": \"States a specific, quantifiable claim about the proportion of CS50 students without prior CS experience, which is factual and verifiable via course enrollment or survey data.\"}"
+        }
+      },
+      {
+        "example_id": 3,
+        "score": 0.0,
+        "inputs": {
+          "context_text": "Windmill Microlending is Canada\u2019s largest provider of affordable and flexible microloans for immigrants and refugees to help them move from low-income work into their professional career. The Hunter Family Foundation established a fund in Alberta with Windmill to address the challenges facing new Albertans as they integrate into Canada\u2019s labour market. Providing the seed capital for this fund, the goal is to have $1Million of circular funds flowing out to these individuals by 2025. Full White Paper. Client Whitepaper \u2013 Understanding the Current Landscape of Emerging Adult Mental Health and Needs in Calgary & Surrounding Area",
+          "target_sentence": "Providing the seed capital for this fund, the goal is to have $1Million of circular funds flowing out to these individuals by 2025."
+        },
+        "expected_output": {
+          "selection_response_json": "{\"selected\": true, \"confidence\": 0.92, \"reasoning\": \"Contains a specific, measurable and time-bound factual claim (a $1 million target of circular funds by 2025 and provision of seed capital) that can be verified against fund documents or reports.\"}"
+        }
+      },
+      {
+        "example_id": 4,
+        "score": 0.0,
+        "inputs": {
+          "context_text": "Target Characteristic: `Verifiability`\nSearch Domain: `financial statements`\nSource URL: `https://www.berkshirehathaway.com/2023ar/2023ar.pdf`\nSource Title: `\"Berkshire Hathaway Inc. 2023 Annual Report (2023ar.pdf)\"`\nJustification for Selection",
+          "target_sentence": "Source URL: `https://www.berkshirehathaway.com/2023ar/2023ar.pdf`"
+        },
+        "expected_output": {
+          "selection_response_json": "{\"selected\": true, \"confidence\": 0.9, \"reasoning\": \"The sentence provides a specific URL pointing to a published document (Berkshire Hathaway 2023 Annual Report), which is a verifiable factual reference that can be checked.\"}"
+        }
+      }
+    ]
+  },
+  "dspy_serialized": null
+}

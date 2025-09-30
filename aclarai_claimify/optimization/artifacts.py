@@ -105,6 +105,10 @@ class CompiledArtifact(BaseModel):
         ..., 
         description="Model used for teaching/optimization guidance"
     )
+    k_window_size: Optional[int] = Field(
+        default=None,
+        description="Context window size (k) used for the training data",
+    )
     
     # Optimization parameters
     optimizer_params: OptimizerParams = Field(
@@ -120,6 +124,10 @@ class CompiledArtifact(BaseModel):
     system_prompt: Optional[str] = Field(
         None, 
         description="System/instruction prompt (if available)"
+    )
+    program_style: Optional[str] = Field(
+        default=None,
+        description="DSPy program style used when compiling (e.g., cot or predict)",
     )
     
     # Validation results
@@ -198,8 +206,10 @@ def create_artifact_dict(
     optimizer_params: OptimizerParams,
     few_shots: Optional[List[FewShotExample]] = None,
     system_prompt: Optional[str] = None,
+    program_style: Optional[str] = None,
     validation_metrics: Optional[ValidationMetrics] = None,
-    dspy_serialized: Optional[Dict[str, Any]] = None
+    dspy_serialized: Optional[Dict[str, Any]] = None,
+    k_window_size: Optional[int] = None,
 ) -> CompiledArtifact:
     """Create a compiled artifact with the given parameters.
     
@@ -213,6 +223,7 @@ def create_artifact_dict(
         system_prompt: System prompt (optional)
         validation_metrics: Validation metrics (optional)
         dspy_serialized: Raw DSPy serialization (optional)
+        k_window_size: Context window size (k) used for training data (optional)
         
     Returns:
         Validated compiled artifact
@@ -225,6 +236,8 @@ def create_artifact_dict(
         optimizer_params=optimizer_params,
         few_shots=few_shots or [],
         system_prompt=system_prompt,
+        program_style=program_style,
         validation_metrics=validation_metrics,
-        dspy_serialized=dspy_serialized
+        dspy_serialized=dspy_serialized,
+        k_window_size=k_window_size,
     )

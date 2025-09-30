@@ -1,0 +1,95 @@
+{
+  "artifact_version": "1.0",
+  "component": "disambiguation",
+  "signature_name": "DisambiguationSignature",
+  "created_at": "2025-09-27T21:16:58.614603",
+  "student_model": "openai/gpt-5-mini",
+  "teacher_model": "openai/gpt-5",
+  "k_window_size": null,
+  "optimizer_params": {
+    "optimizer_name": "gepa",
+    "max_bootstrapped_demos": null,
+    "max_trials": null,
+    "seed": 42,
+    "other_params": {
+      "auto": "medium",
+      "reflection_minibatch_size": 35,
+      "candidate_selection_strategy": "pareto",
+      "skip_perfect_score": true,
+      "add_format_failure_as_feedback": false,
+      "use_merge": true,
+      "max_merge_invocations": 5,
+      "num_threads": 4,
+      "failure_score": 0.0,
+      "perfect_score": 1.0,
+      "track_stats": true,
+      "track_best_outputs": true,
+      "seed": 42
+    }
+  },
+  "few_shots": [],
+  "system_prompt": "You are the Disambiguation stage of the Claimify pipeline.\n\nGoal\n- Rewrite the target sentence so it is self-contained and unambiguous while preserving the original meaning and scope.\n- Use only information explicitly available in the provided context_text and target_sentence. Do not introduce external facts, interpretations, or speculative details.\n\nInputs\n- context_text: A short passage that provides antecedents and surrounding details.\n- target_sentence: The single sentence to be rewritten.\n\nOutput format (JSON only)\n{\n  \"disambiguated_text\": \"<a single, self-contained rewritten sentence>\",\n  \"changes_made\": [\"<brief bullet of each minimal change made>\"],\n  \"confidence\": <float between 0 and 1>\n}\n\nCore principles\n1) Minimal edits, maximum fidelity\n- Make the smallest set of changes needed to remove ambiguity.\n- Do not alter the claim\u2019s strength or modality (e.g., do not turn \u201cannouncing the discovery\u201d into \u201cannouncing a claim\u201d).\n- Preserve tense, tone, and genre (legal, narrative, technical) unless a small, necessary adjustment improves clarity.\n\n2) Resolve only what the context supports\n- Replace ambiguous pronouns and demonstratives (it, they, this, that, these, those, here, there, then) with the clearest antecedent explicitly present in context_text (e.g., \u201cthe unit,\u201d \u201cAtticus Finch,\u201d \u201cthe forum,\u201d \u201cthe container,\u201d \u201cthese political ads\u201d if \u201cpolitical ads\u201d appears in context).\n- If multiple antecedents are plausible and cannot be resolved from context, prefer a neutral noun phrase already used or directly implied (e.g., \u201cthe sender,\u201d \u201cthe team,\u201d \u201cthe device\u201d) rather than inventing roles, attributes, or identities.\n- If critical information is omitted (e.g., an ellipsis), do not fabricate or add placeholders; retain the omission and only clarify what can be clarified around it.\n\n3) Do not add new facts or speculation\n- Do not introduce dates, modern place names, technical commands, procedures, causes, reasons, definitions, or examples unless they are explicitly present in the context_text.\n- Do not infer roles, media, or mechanisms that aren\u2019t stated (e.g., do not add \u201cin a later email,\u201d \u201cdriving,\u201d \u201cexternal lab,\u201d \u201cdistrict logistics hub,\u201d or command-line examples unless given).\n- Do not expand abbreviations or terms (e.g., CSH, Adrianople) unless the expansion appears in context_text.\n\n4) Keep the structure compact\n- Output a single sentence in disambiguated_text (do not split into multiple sentences or add new clauses).\n- Maintain approximately the same level of detail and length; avoid embellishment, new comparisons, or added commentary.\n\n5) Language and style adjustments allowed\n- Correct minor grammar/usage to remove ambiguity (e.g., \u201cplead guilty for\u201d \u2192 \u201cplead guilty to charges of\u201d).\n- Convert passive to active voice only when the agent is explicitly named in context (e.g., \u201cwas identified by the complaining witness\u201d \u2192 \u201cthe complaining witness identified \u2026\u201d).\n- Replace vague nouns with precise ones from context (e.g., \u201csuch ads\u201d \u2192 \u201cthese political ads\u201d if \u201cpolitical ads\u201d is in context).\n\n6) Numbers and measurements\n- Do not add, round, convert, or restate numbers/currencies beyond what is already present.\n- Do not introduce new time frames (e.g., \u201ccalendar year\u201d) unless explicitly stated in the context_text.\n\nWhat to avoid (common failure modes)\n- Adding external facts (years, modern names, definitions, procedures, commands).\n- Speculating about causes, sources, media, or motivations (\u201cbecause everyone is distracted,\u201d \u201creported by residents and news outlets\u201d).\n- Strengthening/weakening claims or changing modality (\u201cdiscovery\u201d \u2194 \u201cclaim\u201d).\n- Rewriting into multiple sentences or adding examples/suggestions.\n- Inventing roles or attributes not stated (e.g., \u201cfemale participant,\u201d \u201cexternal testing laboratory\u201d).\n- Over-expanding metaphors or imagery; only clarify referents when necessary.\n\nchanges_made guidance\n- Provide a short list of the minimal, concrete edits (e.g., \u201cReplaced pronoun \u2018He\u2019 with \u2018Ernesto Miranda\u2019,\u201d \u201cChanged \u2018plead guilty for\u2019 to \u2018plead guilty to charges of\u2019,\u201d \u201cClarified \u2018such ads\u2019 as \u2018these political ads\u2019 as used in context.\u201d).\n- Keep each item concise; do not include reasoning paragraphs or additional notes.\n\nconfidence\n- Reflect how confidently the ambiguities were resolved using the given context (typical range 0.80\u20130.95). Lower if unresolved ambiguity remains.\n\nExample-aligned behaviors\n- Legal/narrative/historical: Resolve pronouns to named subjects from context; do not add dates, titles, or modern place names not provided.\n- Technical/how-to: Clarify pronoun referents; do not add commands, flags, or troubleshooting steps not present.\n- Emails/threads: Prefer \u201cthe sender/recipient\u201d or the named person from context; avoid guessing identity, medium, or timing beyond what is stated.\n- Recipes/food: Clarify what \u201cit/this\u201d refers to (recipe/chicken) without adding extra sensory detail or changing metaphors.\n\nYour output must be only the JSON object described above.",
+  "validation_metrics": {
+    "metric_name": "disambiguation_metric",
+    "score": 0.45215833421187024,
+    "n_val": 65,
+    "per_example_diagnostics": [
+      {
+        "example_id": 0,
+        "score": 0.0,
+        "inputs": {
+          "context_text": "There, she discovers a secret society of artists who have been living underground for decades, preserving forgotten stories. They reveal that the notebook is a map to a legendary film reel that can grant the viewer a glimpse into their deepest desires. Three days later, Maya returns to the surface, her mind buzzing with possibilities.",
+          "target_sentence": "They reveal that the notebook is a map to a legendary film reel that can grant the viewer a glimpse into their deepest desires."
+        },
+        "expected_output": {
+          "disambiguation_response_json": "{\"disambiguated_text\": \"The members of the secret society of artists reveal that the notebook is a map to a legendary film reel that can grant the viewer a glimpse into their deepest desires.\", \"changes_made\": [\"Replaced the pronoun 'They' with 'The members of the secret society of artists' to clarify the referent.\"], \"confidence\": 0.95}"
+        }
+      },
+      {
+        "example_id": 1,
+        "score": 0.967741935483871,
+        "inputs": {
+          "context_text": "In the weeks leading up to the 2025 Global Summit, the world\u2019s attention was fixed on the gleaming, glass\u2011encased halls of the United Nations Headquarters in New\u202fYork. Delegates from 193 member states had already begun to arrive, their luggage heavy with the weight of expectations. The opening ceremony, scheduled for September\u202f12, promised to set the tone for a week of intense negotiation and, perhaps, unprecedented cooperation.",
+          "target_sentence": "Delegates from 193 member states had already begun to arrive, their luggage heavy with the weight of expectations."
+        },
+        "expected_output": {
+          "disambiguation_response_json": "{\"disambiguated_text\": \"Delegates from 193 member states had already begun to arrive, and the delegates' luggage was heavy with the weight of expectations.\", \"changes_made\": [\"Replaced the pronoun 'their' with 'the delegates\\\\'' to clarify that the luggage belonged to the delegates\", \"Converted the original verbless modifier into an explicit clause ('and the delegates' luggage was...') for clarity\"], \"confidence\": 0.95}"
+        }
+      },
+      {
+        "example_id": 2,
+        "score": 0.7254901960784313,
+        "inputs": {
+          "context_text": "Meeting minutes of this kind are densely narrative and conversational in style: they record spoken exchanges, motions, committee referrals, follow-up actions, and procedural history. Sentences frequently rely on earlier context (e.g., \"it was referred to the committee,\" \"he said,\" \"the committee agreed three days later,\" \"the director clarified that\"), and they include temporal markers, cross-references to agenda items, and quoted remarks. Those features create exactly the contextual dependencies (pronouns, ellipses of reference, anaphora, temporal phrases) that make sentences non-self-contained and therefore ideal \"ore\" for training a Disambiguation agent to resolve implicit context into explicit, self-contained factual claims.",
+          "target_sentence": "\"it was referred to the committee,\""
+        },
+        "expected_output": {
+          "disambiguation_response_json": "{\"disambiguated_text\": \"The matter under discussion was referred to the committee.\", \"changes_made\": [\"Replaced the pronoun 'it' with the explicit phrase 'the matter under discussion' to resolve the referent\", \"Capitalized the first word to form a complete sentence\", \"Replaced the trailing comma with a period to complete the sentence\"], \"confidence\": 0.88}"
+        }
+      },
+      {
+        "example_id": 3,
+        "score": 1.0,
+        "inputs": {
+          "context_text": "Just moments before, they had received an email from Andrew Cooper, a former Downing Street strategist and pollster for the official remain campaign, containing the daily \u201ctracker\u201d \u2013 the barometer of support among target segments of the electorate. It had dropped into the defeat zone. The cause was not mysterious.",
+          "target_sentence": "It had dropped into the defeat zone."
+        },
+        "expected_output": {
+          "disambiguation_response_json": "{\"disambiguated_text\": \"The daily \\\"tracker\\\"\\u2014the barometer of support among target segments of the electorate\\u2014had dropped into the defeat zone.\", \"changes_made\": [\"Replaced the pronoun 'It' with 'the daily \\\"tracker\\\" (the barometer of support among target segments of the electorate)' to resolve the referent\", \"Made the sentence self-contained by explicitly naming the tracker\"], \"confidence\": 0.95}"
+        }
+      },
+      {
+        "example_id": 4,
+        "score": 0.0,
+        "inputs": {
+          "context_text": "\u201cThe girls are home now with their mom, Grace, and dad, Mark.\u201d The claim has yet to be formally verified, but if true, it represents a landmark in the continuing ethical and scientific debate around gene editing. Late last year, He reportedly enrolled seven couples in a clinical trial, and used their eggs and sperm to create embryos through in vitro fertilization.",
+          "target_sentence": "The claim has yet to be formally verified, but if true, it represents a landmark in the continuing ethical and scientific debate around gene editing."
+        },
+        "expected_output": {
+          "disambiguation_response_json": "{\"disambiguated_text\": \"The claim that the man who reportedly enrolled seven couples in a clinical trial used gene-editing techniques when creating embryos has yet to be formally verified, but if it is true, it represents a landmark in the continuing ethical and scientific debate around gene editing.\", \"changes_made\": [\"Replaced the vague phrase 'The claim' with 'The claim that the man who reportedly enrolled seven couples in a clinical trial used gene-editing techniques when creating embryos' to identify the referent from the context.\", \"Replaced 'if true' with the explicit phrasing 'if it is true'.\", \"Clarified the referent of 'it' to mean the claim described earlier.\"], \"confidence\": 0.86}"
+        }
+      }
+    ]
+  },
+  "dspy_serialized": null
+}

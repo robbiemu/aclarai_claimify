@@ -7,8 +7,6 @@ name = "aclarai-claimify"
 version = "0.1.0"
 requires-python = ">=3.9"
 dependencies = [
-    "llama-index-core",
-    "llama-index-llms-openai",
     "pydantic>=2.0.0",
     "pyyaml",
     "dspy-ai",
@@ -17,16 +15,44 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "attachments",
 ]
 optimization = [
-    "dspy-ai>=2.4.0",
-    "litellm>=1.0.0",
+    "litellm",
     "rich>=13.0.0",
     "tqdm>=4.65.0",
+    "sentence-transformers",
+    "faiss-cpu",
+    "aiohttp>=3.12.15",
+    "json-repair>=0.44.1",
 ]
 
 [project.scripts]
-aclarai-claimify = "aclarai_claimify.cli:main"
+optimizer = "aclarai_claimify.optimization.cli:main"
 
 [tool.setuptools]
-packages = ["aclarai_claimify"]
+packages = [
+    "aclarai_claimify",
+    "aclarai_claimify.components",
+    "aclarai_claimify.embeddings",
+    "aclarai_claimify.optimization",
+    "aclarai_claimify.optimization.tests",
+    "aclarai_claimify.prompts",
+    "aclarai_claimify.settings",
+    "aclarai_claimify.utils",
+]
+[tool.setuptools.package-data]
+"aclarai_claimify.settings" = ["*.yaml"]
+"aclarai_claimify" = ["../docs/*.md"]
+
+[dependency-groups]
+optimization = [
+    "litellm>=1.76.1",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*SwigPyPacked.*:DeprecationWarning",
+    "ignore:.*SwigPyObject.*:DeprecationWarning",
+    "ignore:.*swigvarlink.*:DeprecationWarning",
+]

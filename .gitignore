@@ -3,8 +3,7 @@
 __MACOSX/
 .AppleDouble
 .LSOverride
-Icon[
-]
+Icon?
 
 # Thumbnails
 ._*
@@ -331,3 +330,9 @@ cline.json
 
 docs/tasks/
 docs/claimify-extraction.plan.md
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.dspy-cache/
+examples/data/datasets/
+checkpoints/

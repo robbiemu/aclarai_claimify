@@ -14,8 +14,6 @@ from ..data_models import SelectionResult
 from ..llm_schemas import SelectionResponse
 from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
-from ..config import load_prompt_template
-from ..prompt_utils import format_prompt_with_schema
 from ..signatures import SelectionSignature
 
 
@@ -38,11 +36,14 @@ class SelectionComponent:
         self,
         llm: Optional[LLMInterface] = None,
         config: Optional[ClaimifyConfig] = None,
+        compiled_prompt_path: Optional[str] = None,
     ):
         self.llm = llm
         self.config = config or ClaimifyConfig()
         # Initialize DSPy module
         self.dspy_module = dspy.Predict(SelectionSignature)
+        if compiled_prompt_path:
+            self.dspy_module.load(compiled_prompt_path)
 
     def __call__(self, state: ClaimifyState) -> ClaimifyState:
         """Process a sentence to determine if it should be selected for further processing.
@@ -99,18 +100,19 @@ class SelectionComponent:
         context_text = self._build_context_text(context)
 
         try:
-            # Call the DSPy module
-            response = self.dspy_module(
-                context_text=context_text,
-                target_sentence=sentence.text,
-            )
+            # Call the DSPy module with the correct LLM
+            with dspy.settings.context(lm=self.llm):
+                response = self.dspy_module(
+                    context_text=context_text,
+                    target_sentence=sentence.text,
+                )
             response = response.selection_response_json.strip()
 
             # Parse JSON response using Pydantic model with proper error handling
             try:
                 result_data = SelectionResponse.model_validate_json(response)
                 is_selected = result_data.selected
-                confidence = result_data.confidence
+                confidence = result_data.confidence or 0.5
                 reasoning = result_data.reasoning
 
                 # Apply confidence threshold - if LLM confidence is below threshold, reject selection

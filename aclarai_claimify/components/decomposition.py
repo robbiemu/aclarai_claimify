@@ -14,8 +14,6 @@ from ..data_models import DecompositionResult
 from ..llm_schemas import DecompositionResponse
 from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
-from ..config import load_prompt_template
-from ..prompt_utils import format_prompt_with_schema
 from ..signatures import DecompositionSignature
 
 
@@ -38,11 +36,14 @@ class DecompositionComponent:
         self,
         llm: Optional[LLMInterface] = None,
         config: Optional[ClaimifyConfig] = None,
+        compiled_prompt_path: Optional[str] = None,
     ):
         self.llm = llm
         self.config = config or ClaimifyConfig()
         # Initialize DSPy module
         self.dspy_module = dspy.Predict(DecompositionSignature)
+        if compiled_prompt_path:
+            self.dspy_module.load(compiled_prompt_path)
 
     def __call__(self, state: ClaimifyState) -> ClaimifyState:
         """Process a disambiguated sentence to extract atomic claims.
@@ -104,10 +105,11 @@ class DecompositionComponent:
         assert self.llm is not None, "LLM must be initialized for this method"
 
         try:
-            # Call the DSPy module
-            response = self.dspy_module(
-                disambiguated_text=text,
-            )
+            # Call the DSPy module with the correct LLM
+            with dspy.settings.context(lm=self.llm):
+                response = self.dspy_module(
+                    disambiguated_text=text,
+                )
             response = response.decomposition_response_json.strip()
 
             # Parse JSON response using Pydantic model with proper error handling
@@ -127,7 +129,7 @@ class DecompositionComponent:
                     reasoning = candidate_data.reasoning
 
                     # Get confidence from LLM response or calculate based on quality flags
-                    confidence = candidate_data.confidence
+                    confidence = candidate_data.confidence or 0.5
                     if confidence is None:
                         # Fallback calculation if LLM doesn't provide confidence
                         if (
