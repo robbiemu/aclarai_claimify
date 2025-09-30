@@ -19,7 +19,7 @@ import os
 import re
 import sys
 from langgraph.graph import StateGraph, END
-from typing import Literal
+from typing import Literal, Dict, Any
 
 # Add the project root to the path to allow importing from aclarai_claimify
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -31,33 +31,35 @@ from aclarai_claimify.components.decomposition import DecompositionComponent
 from aclarai_claimify.data_models import ClaimifyContext, SentenceChunk
 
 # --- Graph Nodes ---
+# Each node in the graph must return a dictionary containing only the fields
+# of the state that it has modified. LangGraph uses this dictionary to update
+# the central state object.
 
-def selection_node(state: ClaimifyState) -> ClaimifyState:
-    """Runs the SelectionComponent to decide if the sentence is worth processing."""
+def selection_node(state: ClaimifyState) -> Dict[str, Any]:
+    """Runs the SelectionComponent and returns the updated part of the state."""
     print("\n--- Running Selection Node ---")
-    # Initialize component within the node to use the globally configured LLM
     selection_component = SelectionComponent(llm=dspy.settings.lm)
     updated_state = selection_component(state)
     print(f"Selection result: {updated_state.was_selected}")
-    return updated_state
+    return {"selection_result": updated_state.selection_result}
 
-def disambiguation_node(state: ClaimifyState) -> ClaimifyState:
-    """Runs the DisambiguationComponent to clarify the sentence."""
+def disambiguation_node(state: ClaimifyState) -> Dict[str, Any]:
+    """Runs the DisambiguationComponent and returns the updated part of the state."""
     print("--- Running Disambiguation Node ---")
     disambiguation_component = DisambiguationComponent(llm=dspy.settings.lm)
     updated_state = disambiguation_component(state)
     if updated_state.disambiguation_result:
         print(f"Disambiguated text: {updated_state.disambiguation_result.disambiguated_text}")
-    return updated_state
+    return {"disambiguation_result": updated_state.disambiguation_result}
 
-def decomposition_node(state: ClaimifyState) -> ClaimifyState:
-    """Runs the DecompositionComponent to extract atomic claims."""
+def decomposition_node(state: ClaimifyState) -> Dict[str, Any]:
+    """Runs the DecompositionComponent and returns the updated part of the state."""
     print("--- Running Decomposition Node ---")
     decomposition_component = DecompositionComponent(llm=dspy.settings.lm)
     updated_state = decomposition_component(state)
     if updated_state.final_claims:
         print(f"Extracted {len(updated_state.final_claims)} claims.")
-    return updated_state
+    return {"decomposition_result": updated_state.decomposition_result}
 
 # --- Conditional Edge ---
 
@@ -158,9 +160,11 @@ def main():
             chunk_id=str(i),
             sentence_index=i,
         )
+        # For simplicity, this example provides no preceding/following context.
         context = ClaimifyContext(current_sentence=sentence)
         initial_state = ClaimifyState(context=context)
 
+        # The `invoke` method returns the final state object.
         final_state = app.invoke(initial_state)
 
         if final_state.final_claims:
