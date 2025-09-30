@@ -87,6 +87,14 @@ else:
 
 ## Examples
 
+### Agent-Based Pipeline Example
+The `agent_pipeline_runtime.py` script shows how to run the original, stateful agent-based pipeline. This is useful for understanding the legacy architecture.
+
+Run the script (ensure you have a compatible LLM server running):
+```bash
+python examples/agent_pipeline_runtime.py
+```
+
 ### Running the LangGraph Example
 
 This example shows how to run the Claimify pipeline as a graph using LangGraph. It can process text from a file or standard input.
