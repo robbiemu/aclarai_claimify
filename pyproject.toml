@@ -17,6 +17,9 @@ dev = [
     "pytest",
     "attachments",
 ]
+langgraph_example = [
+    "langgraph",
+]
 optimization = [
     "litellm",
     "rich>=13.0.0",

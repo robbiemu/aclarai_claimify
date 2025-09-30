@@ -85,6 +85,24 @@ else:
 # - The failure was a surprise to the team.
 ```
 
+## Examples
+
+### Running the LangGraph Example
+
+This example shows how to run the Claimify pipeline as a graph using LangGraph, providing a powerful, visual, and robust way to manage the pipeline's control flow.
+
+First, install the required optional dependencies:
+
+```bash
+uv pip install .[langgraph_example]
+```
+
+Then, run the script. Ensure you have a compatible LLM server running, such as Ollama with the Gemma model.
+
+```bash
+python examples/langgraph_runtime.py
+```
+
 ## Core Concepts
 
 ### Stateless Components
