@@ -10,19 +10,19 @@ import shutil
 import sys
 from pathlib import Path
 
-from .config import load_claimify_config, load_optimization_config
+from aclarai_claimify.config import load_claimify_config, load_optimization_config
 
 
 try:
-    from .optimization.compile import (
+    from aclarai_claimify.optimization.compile import (
         compile_component,
         DataValidationError,
         ModelConfigError,
         DSPyVersionError,
         OptimizationError,
     )
-    from .optimization.data import print_schema_help
-    from .optimization.generate import generate_dataset, GenerationError
+    from aclarai_claimify.optimization.data import print_schema_help
+    from aclarai_claimify.optimization.generate import generate_dataset, GenerationError
 except ImportError:
 
     def _missing_optimization_deps(*args, **kwargs):
@@ -60,13 +60,13 @@ def create_parser() -> argparse.ArgumentParser:
         Configured ArgumentParser instance
     """
     parser = argparse.ArgumentParser(
-        prog="aclarai-claimify",
+        prog="optimizer",
         description="DSPy optimization toolkit for Claimify pipeline components",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Compile selection component
-  aclarai-claimify compile 
+  optimizer compile 
     --component selection 
     --trainset data/selection_train.jsonl 
     --student-model gpt-3.5-turbo 
@@ -75,7 +75,7 @@ Examples:
     --output-path artifacts/selection.json
 
   # Compile with different optimizer configuration
-  aclarai-claimify compile 
+  optimizer compile 
     --component decomposition 
     --trainset data/decomposition_train.jsonl 
     --student-model gpt-3.5-turbo 
@@ -85,7 +85,7 @@ Examples:
     --seed 123
 
   # Show schema help
-  aclarai-claimify schema --component selection
+  optimizer schema --component selection
         """,
     )
 
@@ -640,7 +640,7 @@ def handle_generate_command(args: argparse.Namespace) -> None:
         print("\n💡 Next steps:")
         print("   1. Review the generated dataset for quality")
         print("   2. Use it to compile your component:")
-        print("      aclarai-claimify compile \\")
+        print("      optimizer compile \\")
         print(f"          --component {args.component} \\")
         print(f"          --trainset {args.output_file} \\")
         print("          --student-model <your-student-model> \\")

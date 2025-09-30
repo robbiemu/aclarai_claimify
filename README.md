@@ -111,7 +111,7 @@ Claimify uses a cascading configuration system that allows you to easily overrid
 To get started with custom configurations, run the `init` command:
 
 ```bash
-aclarai-claimify init
+optimizer init
 ```
 
 This will create a `settings/` folder in your current directory with copies of the default configuration files. You can then edit these files to change any settings you need. For example, to change the default model, you would edit `settings/config.yaml` and change the `default_model` value.
@@ -140,7 +140,7 @@ The `compile` command automatically uses the configuration from `settings/config
 
 ```bash
 # Basic compilation
-aclarai-claimify compile \
+optimizer compile \
     --component decomposition \
     --trainset ./my_decomposition_trainset.jsonl \
     --student-model gpt-3.5-turbo \
@@ -148,7 +148,7 @@ aclarai-claimify compile \
     --output-path ./custom_prompts/my_compiled_decomposition.json
 
 # With a custom optimizer config
-aclarai-claimify compile \
+optimizer compile \
     --component decomposition \
     --trainset ./my_decomposition_trainset.jsonl \
     --student-model gpt-3.5-turbo \
@@ -201,7 +201,7 @@ The database migration began at midnight and completed in 4.5 hours.
 Use the built-in CLI to generate a structured dataset for a specific component:
 
 ```bash
-aclarai-claimify generate-dataset \
+optimizer generate-dataset \
     --input-path ./my_raw_sentences.txt \
     --output-file ./my_decomposition_dataset.jsonl \
     --component decomposition \
@@ -209,7 +209,7 @@ aclarai-claimify generate-dataset \
 
 # For components that use context (selection, disambiguation), you can
 # control the context window size with the --k-window-size flag.
-aclarai-claimify generate-dataset \
+optimizer generate-dataset \
     --input-path ./my_raw_sentences.txt \
     --output-file ./my_selection_dataset.jsonl \
     --component selection \
@@ -217,7 +217,7 @@ aclarai-claimify generate-dataset \
     --k-window-size 3 # Use 3 sentences before and 3 after
 
 # When working from curated JSON prospects, enable parallel processing.
-aclarai-claimify generate-dataset \
+optimizer generate-dataset \
     --input-path ./examples/data/prospects/selection \
     --output-file ./my_selection_dataset.jsonl \
     --component selection \
@@ -226,7 +226,7 @@ aclarai-claimify generate-dataset \
     --concurrency 8
 
 # Curated disambiguation/decomposition runs can also request labelled negatives.
-aclarai-claimify generate-dataset \
+optimizer generate-dataset \
     --input-path ./examples/data/prospects/disambiguation \
     --output-file ./my_disambiguation_dataset.jsonl \
     --component disambiguation \
@@ -260,7 +260,7 @@ The generated dataset is a good starting point, but you should review it for qua
 Now you can use your generated dataset with the standard compilation process:
 
 ```bash
-aclarai-claimify compile \
+optimizer compile \
     --component decomposition \
     --trainset ./my_decomposition_dataset.jsonl \
     --student-model gpt-3.5-turbo \

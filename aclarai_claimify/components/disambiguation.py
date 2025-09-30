@@ -14,8 +14,6 @@ from ..data_models import DisambiguationResult, SentenceChunk
 from ..llm_schemas import DisambiguationResponse
 from ..components.state import ClaimifyState
 from ..data_models import ClaimifyConfig
-from ..config import load_prompt_template
-from ..prompt_utils import format_prompt_with_schema
 from ..signatures import DisambiguationSignature
 
 
@@ -38,11 +36,14 @@ class DisambiguationComponent:
         self,
         llm: Optional[LLMInterface] = None,
         config: Optional[ClaimifyConfig] = None,
+        compiled_prompt_path: Optional[str] = None,
     ):
         self.llm = llm
         self.config = config or ClaimifyConfig()
         # Initialize DSPy module
         self.dspy_module = dspy.Predict(DisambiguationSignature)
+        if compiled_prompt_path:
+            self.dspy_module.load(compiled_prompt_path)
 
     def __call__(self, state: ClaimifyState) -> ClaimifyState:
         """Process a selected sentence to remove ambiguities and add inferred subjects.
@@ -110,11 +111,12 @@ class DisambiguationComponent:
         context_text = self._build_context_text(context)
 
         try:
-            # Call the DSPy module
-            response = self.dspy_module(
-                context_text=context_text,
-                target_sentence=sentence.text,
-            )
+            # Call the DSPy module with the correct LLM
+            with dspy.settings.context(lm=self.llm):
+                response = self.dspy_module(
+                    context_text=context_text,
+                    target_sentence=sentence.text,
+                )
             response = response.disambiguation_response_json.strip()
 
             # Parse JSON response using Pydantic model with proper error handling

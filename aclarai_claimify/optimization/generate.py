@@ -5,17 +5,19 @@ by using powerful teacher models to produce structured outputs from raw text inp
 """
 
 import asyncio
+import faiss
+import importlib
 import json
+import numpy as np
 import re
 import sys
+import time
+import traceback
+import litellm
+from litellm import RateLimitError
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Optional
-import time
-import traceback
-import uuid
-import litellm
-from litellm import RateLimitError
 from tqdm import tqdm
 
 from ..data_models import ClaimifyConfig
@@ -492,11 +494,6 @@ Return ONLY a JSON object with key claim_candidates.
         return None
 
 
-import importlib
-import numpy as np
-import faiss
-
-
 def _load_embedder(embedder_config):
     """Dynamically load the embedder plugin."""
     embedder_type = embedder_config.type
@@ -824,7 +821,10 @@ def generate_dataset(
                         file=sys.stderr,
                     )
 
-                if include_negatives and component in {"disambiguation", "decomposition"}:
+                if include_negatives and component in {
+                    "disambiguation",
+                    "decomposition",
+                }:
                     negative_payloads = prospects.get("negative_examples") or []
                     if not isinstance(negative_payloads, list):
                         print(
@@ -833,18 +833,24 @@ def generate_dataset(
                         )
                     else:
                         valid_negatives = [
-                            payload for payload in negative_payloads if isinstance(payload, dict)
+                            payload
+                            for payload in negative_payloads
+                            if isinstance(payload, dict)
                         ]
                         if valid_negatives:
                             # Choose the failure mode that has been requested least so far
                             def _mode_count(payload: dict[str, Any]) -> int:
-                                return requested_failure_modes[payload.get("failure_mode", "")]
+                                return requested_failure_modes[
+                                    payload.get("failure_mode", "")
+                                ]
 
                             selected_negative = min(valid_negatives, key=_mode_count)
                             _enqueue_negative(selected_negative)
             else:
                 for prospect in _iter_curated_examples(prospects, file_path):
-                    _enqueue_positive(prospect, prospect.get("prospect_label", "prospect"))
+                    _enqueue_positive(
+                        prospect, prospect.get("prospect_label", "prospect")
+                    )
         else:
             with open(file_path, "r", encoding="utf-8") as f_in:
                 content = f_in.read()
@@ -933,6 +939,7 @@ def generate_dataset(
         jobs = jobs[:max_examples]
 
     with open(output_file, "w", encoding="utf-8") as f_out:
+
         async def _execute_jobs() -> tuple[int, int, int, int]:
             nonlocal negative_counts
             successful = 0
@@ -1008,8 +1015,13 @@ def generate_dataset(
             return successful, failed, positive_generated, negative_generated
 
         try:
-            successful_examples, failed_examples, positive_examples, negative_examples = asyncio.run(_execute_jobs())
-        except GenerationError as exc:
+            (
+                successful_examples,
+                failed_examples,
+                positive_examples,
+                negative_examples,
+            ) = asyncio.run(_execute_jobs())
+        except GenerationError as _exc:
             f_out.close()
             raise
 
@@ -1029,7 +1041,9 @@ def generate_dataset(
             if negative_quota:
                 modes_to_enforce = requested_failure_modes or set(mode_list)
                 missing = [
-                    mode for mode in modes_to_enforce if negative_counts.get(mode, 0) < negative_quota
+                    mode
+                    for mode in modes_to_enforce
+                    if negative_counts.get(mode, 0) < negative_quota
                 ]
                 if missing:
                     raise GenerationError(

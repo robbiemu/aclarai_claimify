@@ -15,9 +15,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "attachments",
 ]
 optimization = [
-    "dspy-ai>=2.4.0",
     "litellm",
     "rich>=13.0.0",
     "tqdm>=4.65.0",
@@ -28,7 +28,7 @@ optimization = [
 ]
 
 [project.scripts]
-aclarai-claimify = "aclarai_claimify.cli:main"
+optimizer = "aclarai_claimify.optimization.cli:main"
 
 [tool.setuptools]
 packages = [

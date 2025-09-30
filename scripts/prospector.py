@@ -1,5 +1,4 @@
-"""This script is a "Prospector" agent that analyzes a directory of markdown files and, for each file, selects the best positive and negative examples for a given Claimify component. It then saves these curated examples to a new directory of JSON files.
-"""
+"""This script is a "Prospector" agent that analyzes a directory of markdown files and, for each file, selects the best positive and negative examples for a given Claimify component. It then saves these curated examples to a new directory of JSON files."""
 
 import argparse
 import asyncio
@@ -177,22 +176,6 @@ def clean_markdown(content: str) -> str:
     content = re.sub(r"^---\s*$", "", content, flags=re.MULTILINE)
     content = re.sub(r"^>\s?", "", content, flags=re.MULTILINE)
     return content
-
-
-def create_context_window(sentences: list[str], index: int, k: int) -> str:
-    """Creates a context window of k sentences before and after the target sentence.
-
-    Args:
-        sentences: A list of sentences.
-        index: The index of the target sentence.
-        k: The number of sentences to include before and after the target.
-
-    Returns:
-        A string containing the context window.
-    """
-    start = max(0, index - k)
-    end = min(len(sentences), index + k + 1)
-    return "\n".join(sentences[start:end])
 
 
 async def read_text_async(path: Path) -> str:

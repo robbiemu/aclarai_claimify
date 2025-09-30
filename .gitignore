@@ -333,4 +333,6 @@ docs/claimify-extraction.plan.md
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-.dspy_cache/
+.dspy-cache/
+examples/data/datasets/
+checkpoints/
