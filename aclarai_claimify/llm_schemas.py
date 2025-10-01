@@ -8,12 +8,14 @@ class SelectionResponse(BaseModel):
     selected: bool = Field(
         ...,
         validation_alias=AliasChoices(
+            "decision",
+            "selection_decision",
             "selection",
             "selected",
             "select",
+            "should_select",
             "is_selected",
             "is_selectable",
-            "selection_decision",
         ),
         description="Whether the sentence should be selected for processing",
     )
@@ -31,7 +33,7 @@ class SelectionResponse(BaseModel):
     @classmethod
     def coerce_to_bool(cls, v):
         if isinstance(v, str):
-            if v.lower() in ["yes", "true", "include", "selected"]:
+            if v.lower() in ["yes", "true", "include", "selected", "select"]:
                 return True
             elif v.lower() in ["no", "false", "exclude", "not_selected"]:
                 return False

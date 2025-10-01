@@ -8,6 +8,7 @@ import time
 from typing import Optional, Protocol
 
 import dspy
+from json_repair import repair_json
 from pydantic import ValidationError
 
 from ..data_models import DecompositionResult
@@ -110,11 +111,12 @@ class DecompositionComponent:
                 response = self.dspy_module(
                     disambiguated_text=text,
                 )
-            response = response.decomposition_response_json.strip()
+            response_text = response.decomposition_response_json.strip()
+            repaired_response = repair_json(response_text)
 
             # Parse JSON response using Pydantic model with proper error handling
             try:
-                result_data = DecompositionResponse.model_validate_json(response)
+                result_data = DecompositionResponse.model_validate_json(repaired_response)
                 claim_candidates = []
                 for candidate_data in result_data.claim_candidates:
                     claim_text = candidate_data.text.strip()
