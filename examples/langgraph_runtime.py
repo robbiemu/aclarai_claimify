@@ -1,20 +1,34 @@
 """
-Example of a pure DSPy runtime for the Claimify pipeline.
+Example of running the Claimify pipeline as a graph using LangGraph.
 
-This script demonstrates how to use the Claimify components with a DSPy LLM
-to process a file and extract claims.
+This script demonstrates how to orchestrate the stateless Claimify components
+(Selection, Disambiguation, Decomposition) using LangGraph. It processes text
+from a file or standard input and extracts claims.
 
 Usage:
-    python examples/dspy_runtime.py --input-file <path_to_input_file> --output-file <path_to_output_file>
+    - Ensure you have a compatible LLM server running.
+    - Run with a file:
+      python examples/langgraph_runtime.py --input-file <path_to_input_file>
+    - Run with stdin:
+      cat <path_to_input_file> | python examples/langgraph_runtime.py
 """
 
 import argparse
 import dspy
-import faiss
 import logging
-import numpy as np
 import re
 import sys
+from langgraph.graph import StateGraph, END
+from typing import Literal, Dict, Any
+import numpy as np
+import faiss
+
+from common import (
+    clean_markdown_text,
+    split_into_sentences,
+    load_embedder,
+)
+
 from attachments import attach, load, present
 
 from aclarai_claimify.config import load_claimify_config
@@ -22,19 +36,77 @@ from aclarai_claimify.components.state import ClaimifyState
 from aclarai_claimify.components.selection import SelectionComponent
 from aclarai_claimify.components.disambiguation import DisambiguationComponent
 from aclarai_claimify.components.decomposition import DecompositionComponent
+from aclarai_claimify.data_models import ClaimifyContext, SentenceChunk
 from aclarai_claimify.utils.context import create_context_window
-from aclarai_claimify.data_models import (
-    ClaimifyContext,
-    SentenceChunk,
-)
 
-from .common import clean_markdown_text, load_embedder, split_into_sentences
+
+# --- Graph Nodes ---
+# Each node in the graph must return a dictionary containing only the fields
+# of the state that it has modified. LangGraph uses this dictionary to update
+# the central state object.
+
+selection_component: SelectionComponent = None
+disambiguation_component: DisambiguationComponent = None
+decomposition_component: DecompositionComponent = None
+
+
+def selection_node(state: ClaimifyState) -> Dict[str, Any]:
+    """Runs the SelectionComponent and returns the updated part of the state."""
+    logging.info("\n--- Running Selection Node ---")
+    updated_state = selection_component(state)
+    logging.info(f"\n reason: {updated_state.selection_result.reasoning}")
+    return {"selection_result": updated_state.selection_result}
+
+
+def disambiguation_node(state: ClaimifyState) -> Dict[str, Any]:
+    """Runs the DisambiguationComponent and returns the updated part of the state."""
+    logging.info("--- Running Disambiguation Node ---")
+    updated_state = disambiguation_component(state)
+    if updated_state.disambiguation_result:
+        logging.info(
+            f"Disambiguated text: {updated_state.disambiguation_result.disambiguated_text}"
+        )
+    return {"disambiguation_result": updated_state.disambiguation_result}
+
+
+def decomposition_node(state: ClaimifyState) -> Dict[str, Any]:
+    """Runs the DecompositionComponent and returns the updated part of the state."""
+    logging.info("--- Running Decomposition Node ---")
+    updated_state = decomposition_component(state)
+    if updated_state.final_claims:
+        logging.info(f"Extracted {len(updated_state.final_claims)} claims.")
+    return {
+        "decomposition_result": updated_state.decomposition_result,
+        "final_claims": updated_state.final_claims,
+    }
+
+
+# --- Conditional Edge ---
+
+
+def should_continue(state: ClaimifyState) -> Literal["continue", "end"]:
+    """Determines the next step after the selection node based on its output."""
+    logging.info(
+        f"--- Checking Condition: Was sentence selected? -> {state.was_selected} ---"
+    )
+    if state.was_selected:
+        return "continue"
+    else:
+        return "end"
+
+
+# --- Utility Functions ---
+
+
+# --- Main Execution ---
 
 
 def main():
-    """Main function to run the DSPy runtime."""
+    """Assemble the graph and process input from a file or stdin."""
+    global selection_component, disambiguation_component, decomposition_component
+
     parser = argparse.ArgumentParser(
-        description="Pure DSPy runtime for the Claimify pipeline."
+        description="Run the Claimify pipeline using LangGraph."
     )
     parser.add_argument(
         "--input-file",
@@ -42,9 +114,19 @@ def main():
     )
     parser.add_argument(
         "--output-file",
-        help="Path to the output file. If not provided, output will be printed to STDOUT.",
+        help="Path to the output file. If not provided, prints to STDOUT.",
     )
-    parser.add_argument("--model", default="openai/gpt-5", help="DSPy model to use.")
+    parser.add_argument(
+        "--model",
+        default="openai/gpt-5",
+        help="DSPy model to use (e.g., 'openai/gpt-5', 'ollama/gemma:2b').",
+    )
+    parser.add_argument(
+        "--model-params",
+        type=str,
+        default="{}",
+        help='JSON string with additional model parameters (e.g., \'{"temperature": 0.7, "max_tokens": 1000}\')',
+    )
     parser.add_argument(
         "--context-method",
         default="semantic",
@@ -81,12 +163,6 @@ def main():
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Set the logging verbosity level.",
     )
-    parser.add_argument(
-        "--model-params",
-        type=str,
-        default="{}",
-        help='JSON string with additional model parameters (e.g., \'{"temperature": 0.7, "max_tokens": 1000}\')',
-    )
     args = parser.parse_args()
 
     # Configure logging
@@ -108,7 +184,7 @@ def main():
 
     # Configure the DSPy LLM
     lm = dspy.LM(model=args.model, **model_params)
-    dspy.configure(lm=lm, adapter=dspy.JSONAdapter())
+    dspy.configure(lm=lm)
 
     # Verify the configuration was set
     if dspy.settings.lm is None:
@@ -120,35 +196,58 @@ def main():
     # Load the config
     config = load_claimify_config()
 
-    # Initialize the components WITHOUT passing llm
-    # They will use the global dspy.settings.lm
-    selection_comp = SelectionComponent(llm=dspy.settings.lm, config=config)
-    disambiguation_comp = DisambiguationComponent(llm=dspy.settings.lm, config=config)
-    decomposition_comp = DecompositionComponent(llm=dspy.settings.lm, config=config)
+    # Initialize components
+    selection_component = SelectionComponent(llm=dspy.settings.lm, config=config)
+    disambiguation_component = DisambiguationComponent(
+        llm=dspy.settings.lm, config=config
+    )
+    decomposition_component = DecompositionComponent(
+        llm=dspy.settings.lm, config=config
+    )
 
-    # Read and clean the input - either from file or STDIN
+    # 2. Define the Graph
+    workflow = StateGraph(ClaimifyState)
+    workflow.add_node("selection", selection_node)
+    workflow.add_node("disambiguation", disambiguation_node)
+    workflow.add_node("decomposition", decomposition_node)
+
+    workflow.set_entry_point("selection")
+    workflow.add_conditional_edges(
+        "selection",
+        should_continue,
+        {"continue": "disambiguation", "end": END},
+    )
+    workflow.add_edge("disambiguation", "decomposition")
+    workflow.add_edge("decomposition", END)
+
+    app = workflow.compile()
+
+    # 3. Read and process input
     if args.input_file:
-        # Use attachments for file input
         logger.info(f"Reading from file: {args.input_file}")
         attachment = (
             attach(args.input_file) | load.text_to_string | present.markdown_to_text
         )
-        cleaned_text = attachment.text
+        text_content = attachment.text
         source_id = args.input_file
     else:
-        # Read from STDIN and use the same cleaning logic
-        logger.info("Reading from STDIN")
+        logger.info("Reading from STDIN...")
         raw_text = sys.stdin.read()
-        cleaned_text = clean_markdown_text(raw_text)
+        text_content = clean_markdown_text(raw_text)
         source_id = "<stdin>"
 
-    logger.debug(f"\n--- Processing text from: {source_id} ---\n{cleaned_text}")
+    logger.debug(f"\n--- Processing text from: {source_id} ---\n{text_content}")
 
-    sentences = split_into_sentences(cleaned_text)
+    sentences = split_into_sentences(text_content)
+    logger.info(f"Found {len(sentences)} sentences to process.")
+    all_claims = []
 
-    # Context generation
+    # Context generation setup
+    embedder = None
+    index = None
+    embeddings = None
     if args.context_method == "semantic":
-        print("Generating semantic context...")
+        logger.info("Generating semantic context...")
         embedder_config = config.generate_dataset.semantic.embedder
         embedder = load_embedder(embedder_config)
         embeddings = embedder.embed(sentences)
@@ -157,8 +256,7 @@ def main():
         index = faiss.IndexFlatIP(embeddings.shape[1])
         index.add(embeddings)
 
-    # Process the sentences
-    all_claims = []
+    # 4. Loop through sentences and run the graph
     for i, sentence_text in enumerate(sentences):
         sentence_text = sentence_text.strip()
         if not sentence_text:
@@ -173,6 +271,7 @@ def main():
             sentence_index=i,
         )
 
+        # Generate context
         if args.context_method == "static":
             context_sentences_str = create_context_window(
                 sentences, i, args.k_window_size
@@ -207,6 +306,9 @@ def main():
                     (sentences[idx], idx) for idx in all_neighbors[: args.min_k]
                 ]
 
+        else:
+            context_sentences_list = []
+
         preceding_chunks = [
             SentenceChunk(
                 text=s.strip(),
@@ -223,24 +325,18 @@ def main():
             following_sentences=[],
         )
 
-        state = ClaimifyState(context=context)
+        initial_state = ClaimifyState(context=context)
         logger.info(f"Context for sentence {i + 1}: {context}")
 
-        # Run the components in sequence
-        state = selection_comp(state)
-        logger.info(f"Selection result: {state.selection_result}")
+        # The `invoke` method returns the final state of the graph as a dictionary.
+        final_state = app.invoke(initial_state)
 
-        if state.was_selected:
-            state = disambiguation_comp(state)
-            logger.info(f"Disambiguation result: {state.disambiguation_result}")
-            state = decomposition_comp(state)
-            logger.info(f"Decomposition result: {state.decomposition_result}")
-
-        if state.final_claims:
-            for claim in state.final_claims:
+        final_claims = final_state.get("final_claims")
+        if final_claims:
+            for claim in final_claims:
                 all_claims.append(claim.text)
 
-    # Write the claims to the output file or STDOUT
+    # 5. Output results
     if args.output_file:
         with open(args.output_file, "w") as f:
             for claim in all_claims:

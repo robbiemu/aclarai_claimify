@@ -8,6 +8,7 @@ import time
 from typing import Optional, Protocol
 
 import dspy
+from json_repair import repair_json
 from pydantic import ValidationError
 
 from ..data_models import SelectionResult
@@ -56,27 +57,27 @@ class SelectionComponent:
         """
         start_time = time.time()
         sentence = state.context.current_sentence
-        
+
         try:
             # LLM is required for selection processing
             if self.llm is None:
                 raise ValueError("LLM is required for Selection component processing")
-            
+
             result = self._llm_selection(state.context)
             processing_time = time.time() - start_time
-            
+
             # Update state with result
             new_state = state.model_copy()
             new_state.selection_result = result
             new_state.selection_result.processing_time = processing_time
             return new_state
-            
+
         except Exception as e:
             processing_time = time.time() - start_time
             error_msg = f"Error in selection processing: {e}"
             new_state = state.model_copy()
             new_state.errors.append(error_msg)
-            
+
             # Create a default selection result for error handling
             default_result = SelectionResult(
                 sentence_chunk=sentence,
@@ -106,11 +107,12 @@ class SelectionComponent:
                     context_text=context_text,
                     target_sentence=sentence.text,
                 )
-            response = response.selection_response_json.strip()
+            response_text = response.selection_response_json.strip()
+            repaired_response = repair_json(response_text)
 
             # Parse JSON response using Pydantic model with proper error handling
             try:
-                result_data = SelectionResponse.model_validate_json(response)
+                result_data = SelectionResponse.model_validate_json(repaired_response)
                 is_selected = result_data.selected
                 confidence = result_data.confidence or 0.5
                 reasoning = result_data.reasoning
@@ -133,7 +135,9 @@ class SelectionComponent:
             except ValidationError as e:
                 # Log detailed validation error for debugging
                 error_details = "\n".join([f"- {error}" for error in e.errors()])
-                raise ValueError(f"Invalid JSON response from LLM does not match expected schema:\n{error_details}") from e
+                raise ValueError(
+                    f"Invalid JSON response from LLM does not match expected schema:\n{error_details}"
+                ) from e
             except Exception as e:
                 raise ValueError(f"Invalid JSON response from LLM: {e}") from e
         except Exception as e:

@@ -8,6 +8,7 @@ import time
 from typing import Optional, Protocol
 
 import dspy
+from json_repair import repair_json
 from pydantic import ValidationError
 
 from ..data_models import DisambiguationResult, SentenceChunk
@@ -117,11 +118,12 @@ class DisambiguationComponent:
                     context_text=context_text,
                     target_sentence=sentence.text,
                 )
-            response = response.disambiguation_response_json.strip()
+            response_text = response.disambiguation_response_json.strip()
+            repaired_response = repair_json(response_text)
 
             # Parse JSON response using Pydantic model with proper error handling
             try:
-                result_data = DisambiguationResponse.model_validate_json(response)
+                result_data = DisambiguationResponse.model_validate_json(repaired_response)
                 disambiguated_text = result_data.disambiguated_text
                 changes_made = result_data.changes_made
                 confidence = result_data.confidence

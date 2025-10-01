@@ -10,12 +10,16 @@ dependencies = [
     "pydantic>=2.0.0",
     "pyyaml",
     "dspy-ai",
+    "json-repair>=0.51.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "attachments",
+]
+langgraph_example = [
+    "langgraph",
 ]
 optimization = [
     "litellm",
@@ -24,7 +28,6 @@ optimization = [
     "sentence-transformers",
     "faiss-cpu",
     "aiohttp>=3.12.15",
-    "json-repair>=0.44.1",
 ]
 
 [project.scripts]

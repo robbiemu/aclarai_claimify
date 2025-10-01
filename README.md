@@ -85,6 +85,42 @@ else:
 # - The failure was a surprise to the team.
 ```
 
+## Examples
+
+### Running the LangGraph Example
+
+This example shows how to run the Claimify pipeline as a graph using LangGraph. It can process text from a file or standard input.
+
+First, install the required optional dependencies:
+
+```bash
+uv pip install .[langgraph_example]
+```
+
+To run the script on a text file, use the `--input-file` argument. You can also specify the model to use:
+
+```bash
+# Create a sample input file
+echo "The system returned error code 500. It was unexpected." > input.txt
+
+# Run the example using a local Ollama model
+python examples/langgraph_runtime.py --input-file input.txt --model ollama/gemma:2b
+```
+
+You can also pipe input directly into the script:
+
+```bash
+cat input.txt | python examples/langgraph_runtime.py --model ollama/gemma:2b
+```
+
+To use models that require API keys (like OpenAI), you can pass them via the `--model-params` argument:
+
+```bash
+python examples/langgraph_runtime.py --input-file input.txt \
+  --model gpt-3.5-turbo \
+  --model-params '{"api_key": "YOUR_OPENAI_API_KEY"}'
+```
+
 ## Core Concepts
 
 ### Stateless Components
